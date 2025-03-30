@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 # Sentinal - Linux Malware Analysis Tool (x86 Version)
 
 A comprehensive malware analysis framework for Linux x86/x86_64 systems that provides:
@@ -36,33 +37,33 @@ A comprehensive malware analysis framework for Linux x86/x86_64 systems that pro
 ⚠️ This tool executes potentially malicious files. Always run in isolated environments or VMs.
 =======
 # SentinelCore: Malware Detection Engine TODO List  
+=======
+What we're doing:
+>>>>>>> 13cc650 (revise readme)
 
-## Phase 1: Static Analysis Core (Weeks 1-4)  
-- [ ] **Environment Setup**  
-  - [ ] Create Python virtual environment with `poetry`  
-  - [ ] Install core dependencies: `pytsk3`, `python-magic`, `numpy`  
+## Malware Analysis
 
-- [ ] **Entropy Module**  
-  - [ ] Implement Shannon entropy calculator (Python)  
-  - [ ] Add block-based analysis (256-byte chunks)  
-  - [ ] Benchmark against 1000+ file corpus (benign/malware)  
+_If any subpart detects malware, it returns process PID to sandboxing part_
 
-- [ ] **File Validation**  
-  - [ ] Integrate libmagic for magic number detection  
-  - [ ] Create allowlist/blocklist for file types (e.g., `.exe`, `.docm`)  
+1. **Static checks using ClamAV** (refer to note¹)
+2. **File MD5 and entropy check**
+3. **System log check**
+   - Adapt code from [Log_analyzer](https://github.com/Rishikesh-khot/Log_analyzer)
+   - Implement LLM APIs
+4. **Scanning `/home/username/*`**
+   - Use ClamAV and VirusTotal
+   - Implement MD5 entropy-based checks
+   - _Need to decide where to call VirusTotal_
 
-- [ ] **Testing Foundation**  
-  - [ ] Collect 50+ test samples (25% malware from VirusShare)  
-  - [ ] Implement pytest framework with coverage ≥80%  
+## Malware Sandboxing
+
+_todo_
 
 ---
 
-## Phase 2: CLI & Threshold Logic (Weeks 3-4)  
-- [ ] **Command Line Interface**  
-  - [ ] Add `--scan-file` argument with file path validation  
-  - [ ] Implement `--threshold` parameter (default: 6.8)  
-  - [ ] Create JSON output option  
+### Note¹: ClamAV Capabilities
 
+<<<<<<< HEAD
 - [ ] **Threshold Calibration**  
   - [ ] Statistical analysis of 1000+ files to set baseline  
   - [ ] Implement context-aware thresholds (e.g., `/tmp` vs `/usr/bin`)  
@@ -128,3 +129,8 @@ A comprehensive malware analysis framework for Linux x86/x86_64 systems that pro
 | False positives | QA | Context-aware thresholds |  
 | Sandbox escape | Sec | AppArmor hardening |  
 >>>>>>> ee64751 (Create README.md)
+=======
+- **User file uploads**: ClamAV can scan files uploaded by users to detect malicious content
+- **System scanning**: While ClamAV doesn't natively scan system logs, it can scan the entire `/home/username/*` directory structure as requested
+- **Real-time protection**: ClamAV offers real-time protection specifically for Linux systems through ClamOnAcc, which can block file access until scanning is complete
+>>>>>>> 13cc650 (revise readme)
