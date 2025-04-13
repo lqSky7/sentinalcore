@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 flask
 flask-cors
 psutil
@@ -7,3 +8,9 @@ numpy
 requests
 python-dotenv
 hashlib
+=======
+requests>=2.25.0
+pyclamd>=0.4.0
+pytest>=7.0.0
+mock>=4.0.0
+>>>>>>> 6f285b4 (requirements.txt for pip packages)
