@@ -12,7 +12,8 @@ package-mode = "false"
 dependencies = [
     "requests (>=2.32.3,<3.0.0)",
     "pyclamd (>=0.4.0,<0.5.0)",
-    "bcc (>=0.1.10,<0.2.0)"
+    "bcc (>=0.1.10,<0.2.0)",
+    "psutil (>=7.0.0,<8.0.0)"
 ]
 
 [tool.poetry]

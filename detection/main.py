@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Set
 from entropy import EntropyAnalyzer
 from virustotalUpload import VirusTotalClient
 from LLMlogs import LogAnalyzer
+from clamav_scan import ClamAVScanner  # Add this import
 
 # Define path for the isolation data file
 MALWARE_PROCESS_FILE = os.environ.get("MALWARE_PROCESS_FILE", 
@@ -25,25 +26,28 @@ MALWARE_PROCESS_FILE = os.environ.get("MALWARE_PROCESS_FILE",
 class MalwareDetector:
     """Main malware detection class integrating all detection methods"""
     
-    def __init__(self, virustotal_api_key: str, gemini_api_key: str):
+    def __init__(self, virustotal_api_key: str, gemini_api_key: str, clamd_socket: Optional[str] = None):
         """
         Initialize the malware detector
         
         Args:
             virustotal_api_key: VirusTotal API key
             gemini_api_key: Google Gemini API key
+            clamd_socket: Path to the clamd socket for ClamAV scanning (optional)
         """
         self.entropy_analyzer = EntropyAnalyzer()
         self.virustotal_client = VirusTotalClient(virustotal_api_key)
         self.log_analyzer = LogAnalyzer(gemini_api_key)
+        self.clamav_scanner = ClamAVScanner(clamd_socket=clamd_socket)  # Add ClamAV scanner
         
-    def scan_file(self, file_path: str, check_virustotal: bool = True) -> Dict:
+    def scan_file(self, file_path: str, check_virustotal: bool = True, use_clamav: bool = True) -> Dict:
         """
         Scan a single file for malware
         
         Args:
             file_path: Path to the file to scan
             check_virustotal: Whether to check the file against VirusTotal
+            use_clamav: Whether to scan the file with ClamAV
             
         Returns:
             Dict: Scan results
@@ -67,6 +71,18 @@ class MalwareDetector:
         if entropy_result.get("is_suspicious", False):
             results["is_malicious"] = True
             results["detection_methods"].append("entropy")
+        
+        # ClamAV scanning
+        if use_clamav:
+            try:
+                clamav_result = self.clamav_scanner.scan_file(file_path)
+                results["clamav_analysis"] = clamav_result
+                
+                if clamav_result.get("is_malicious", False):
+                    results["is_malicious"] = True
+                    results["detection_methods"].append("clamav")
+            except Exception as e:
+                results["clamav_error"] = str(e)
             
         # VirusTotal analysis
         if check_virustotal:
@@ -84,7 +100,8 @@ class MalwareDetector:
             
         return results
     
-    def scan_directory(self, directory_path: str, recursive: bool = True, check_virustotal: bool = False) -> Dict:
+    def scan_directory(self, directory_path: str, recursive: bool = True, 
+                      check_virustotal: bool = False, use_clamav: bool = True) -> Dict:
         """
         Scan a directory for malware
         
@@ -92,6 +109,7 @@ class MalwareDetector:
             directory_path: Path to the directory to scan
             recursive: Whether to scan subdirectories recursively
             check_virustotal: Whether to check files against VirusTotal
+            use_clamav: Whether to scan files with ClamAV
             
         Returns:
             Dict: Scan results
@@ -109,8 +127,33 @@ class MalwareDetector:
         if not os.path.exists(directory_path) or not os.path.isdir(directory_path):
             results["error"] = f"Directory {directory_path} does not exist"
             return results
-            
-        # Entropy analysis
+        
+        # ClamAV directory scan if enabled
+        if use_clamav:
+            try:
+                clamav_results = self.clamav_scanner.scan_directory(directory_path, recursive=recursive)
+                results["clamav_analysis"] = clamav_results
+                
+                if clamav_results.get("is_malicious", False):
+                    results["is_malicious"] = True
+                    results["detection_methods"].append("clamav")
+                    
+                    # Add infected files to suspicious files list
+                    for infected_file in clamav_results.get("infected_files", []):
+                        file_path = infected_file.get("file_path")
+                        if file_path and file_path not in results["suspicious_files"]:
+                            results["suspicious_files"].append(file_path)
+                    
+                    # Get PIDs for infected files
+                    infected_files = [info.get("file_path") for info in clamav_results.get("infected_files", []) 
+                                     if "file_path" in info]
+                    if infected_files:
+                        pids = self.clamav_scanner.get_pids_using_infected_files(infected_files)
+                        results["suspicious_pids"].extend(pids)
+            except Exception as e:
+                results["clamav_error"] = str(e)
+        
+        # Continue with entropy analysis
         entropy_results = self.entropy_analyzer.scan_directory(directory_path, recursive)
         
         # Process entropy results
@@ -146,7 +189,10 @@ class MalwareDetector:
                         if virustotal_result.get("is_malicious", False):
                             if "virustotal" not in results["detection_methods"]:
                                 results["detection_methods"].append("virustotal")
-                
+            
+        # Remove duplicate PIDs
+        results["suspicious_pids"] = list(set(results["suspicious_pids"]))
+        
         # Return the full results
         return results
     
@@ -163,13 +209,14 @@ class MalwareDetector:
         return self.log_analyzer.analyze_system_logs(time_window)
         
     def full_system_scan(self, home_dir: str = None, check_virustotal: bool = False, 
-                         log_time_window: int = 60) -> Dict:
+                         use_clamav: bool = True, log_time_window: int = 60) -> Dict:
         """
         Perform a full system scan, including file analysis and logs
         
         Args:
             home_dir: Home directory to scan (defaults to current user's home)
             check_virustotal: Whether to check files against VirusTotal
+            use_clamav: Whether to use ClamAV for scanning
             log_time_window: Time window in minutes for log analysis
             
         Returns:
@@ -186,7 +233,9 @@ class MalwareDetector:
             home_dir = os.path.expanduser('~')
             
         # Scan the home directory
-        dir_scan_results = self.scan_directory(home_dir, recursive=True, check_virustotal=check_virustotal)
+        dir_scan_results = self.scan_directory(home_dir, recursive=True, 
+                                              check_virustotal=check_virustotal,
+                                              use_clamav=use_clamav)
         results["directory_scan"] = dir_scan_results
         
         # Update results based on directory scan
@@ -318,10 +367,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SentinalCore malware detection system")
     parser.add_argument("--virustotal-key", help="VirusTotal API key")
     parser.add_argument("--gemini-key", help="Google Gemini API key")
+    parser.add_argument("--clamd-socket", help="Path to ClamAV clamd socket")
     parser.add_argument("--scan-file", help="Path to a file to scan")
     parser.add_argument("--scan-dir", help="Path to a directory to scan")
     parser.add_argument("--scan-home", action="store_true", help="Scan user's home directory")
     parser.add_argument("--check-virustotal", action="store_true", help="Check suspicious files with VirusTotal")
+    parser.add_argument("--use-clamav", action="store_true", help="Use ClamAV for antivirus scanning")
+    parser.add_argument("--clamav-update", action="store_true", help="Update ClamAV virus definitions")
     parser.add_argument("--analyze-logs", action="store_true", help="Analyze system logs for malicious activity")
     parser.add_argument("--log-time", type=int, default=60, help="Time window in minutes for log analysis")
     parser.add_argument("--full-scan", action="store_true", help="Perform a full system scan")
@@ -333,19 +385,24 @@ if __name__ == "__main__":
     # Check for required API keys
     virustotal_key = args.virustotal_key or os.environ.get("VIRUSTOTAL_API_KEY", "")
     gemini_key = args.gemini_key or os.environ.get("GEMINI_API_KEY", "")
+    clamd_socket = args.clamd_socket or os.environ.get("CLAMD_SOCKET", "")
     
-    if not virustotal_key and (args.check_virustotal or args.full_scan):
-        print("VirusTotal API key is required for VirusTotal integration.")
-        print("Set it with --virustotal-key or VIRUSTOTAL_API_KEY environment variable.")
-        sys.exit(1)
-        
-    if not gemini_key and (args.analyze_logs or args.full_scan):
-        print("Google Gemini API key is required for log analysis.")
-        print("Set it with --gemini-key or GEMINI_API_KEY environment variable.")
-        sys.exit(1)
-        
+    # Update ClamAV if requested
+    if args.clamav_update:
+        try:
+            scanner = ClamAVScanner(clamd_socket=clamd_socket)
+            update_result = scanner.update_database()
+            print(json.dumps(update_result, indent=2))
+            if not args.scan_file and not args.scan_dir and not args.scan_home and not args.full_scan:
+                sys.exit(0)
+        except Exception as e:
+            print(f"Error updating ClamAV database: {e}")
+            sys.exit(1)
+            
+    # Continue with other functionality
+    
     # Initialize the detector
-    detector = MalwareDetector(virustotal_key, gemini_key)
+    detector = MalwareDetector(virustotal_key, gemini_key, clamd_socket=clamd_socket)
     
     # Track if any action was performed
     action_performed = False
@@ -355,7 +412,7 @@ if __name__ == "__main__":
     if args.scan_file:
         action_performed = True
         print(f"Scanning file: {args.scan_file}")
-        results = detector.scan_file(args.scan_file, check_virustotal=args.check_virustotal)
+        results = detector.scan_file(args.scan_file, check_virustotal=args.check_virustotal, use_clamav=args.use_clamav)
         
         if results.get("is_malicious", False):
             print("⚠️ File appears to be suspicious/malicious!")
@@ -371,7 +428,7 @@ if __name__ == "__main__":
     if args.scan_dir:
         action_performed = True
         print(f"Scanning directory: {args.scan_dir}")
-        results = detector.scan_directory(args.scan_dir, recursive=True, check_virustotal=args.check_virustotal)
+        results = detector.scan_directory(args.scan_dir, recursive=True, check_virustotal=args.check_virustotal, use_clamav=args.use_clamav)
         
         if results.get("is_malicious", False):
             print("⚠️ Suspicious/malicious files found!")
@@ -389,7 +446,7 @@ if __name__ == "__main__":
         action_performed = True
         home_dir = os.path.expanduser('~')
         print(f"Scanning home directory: {home_dir}")
-        results = detector.scan_directory(home_dir, recursive=True, check_virustotal=args.check_virustotal)
+        results = detector.scan_directory(home_dir, recursive=True, check_virustotal=args.check_virustotal, use_clamav=args.use_clamav)
         
         if results.get("is_malicious", False):
             print("⚠️ Suspicious/malicious files found!")
@@ -425,9 +482,6 @@ if __name__ == "__main__":
     if args.full_scan:
         action_performed = True
         print("Performing full system scan...")
-        results = detector.full_system_scan(check_virustotal=args.check_virustotal,
-                                          log_time_window=args.log_time)
-        
         summary = detector.get_detection_summary(results)
         print("\nScan complete. Results summary:")
         print(summary)
