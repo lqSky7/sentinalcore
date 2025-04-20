@@ -10,7 +10,14 @@ import tempfile
 import re
 import time
 import json
+import datetime
+import psutil
 from typing import Dict, List, Optional, Union, Tuple, Set
+
+# Path for storing malicious process data
+MALWARE_PROCESS_FILE = os.environ.get("MALWARE_PROCESS_FILE", 
+                                     os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                "..", "isolation", "malware_processes.txt"))
 
 class ClamAVScanner:
     """Class for interfacing with ClamAV antivirus"""
@@ -495,6 +502,76 @@ class ClamAVScanner:
             
         return infected_pids
 
+    def write_malicious_processes_to_file(self, infected_files: List[Dict]) -> None:
+        """
+        Write information about processes using infected files to a text file
+        
+        Args:
+            infected_files: List of infected file information dictionaries
+        """
+        if not infected_files:
+            return
+            
+        # Extract just the file paths
+        file_paths = [info["file_path"] for info in infected_files if "file_path" in info]
+        if not file_paths:
+            return
+            
+        # Get PIDs using these infected files
+        infected_pids = self.get_pids_using_infected_files(file_paths)
+        if not infected_pids:
+            return
+            
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(MALWARE_PROCESS_FILE), exist_ok=True)
+            
+            with open(MALWARE_PROCESS_FILE, 'a') as f:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"\n--- Malicious processes detected by ClamAV at {timestamp} ---\n")
+                
+                # Get and write process information for each PID
+                for pid in infected_pids:
+                    try:
+                        process = psutil.Process(pid)
+                        exec_path = process.exe()
+                        cmdline = " ".join(process.cmdline())
+                        username = process.username()
+                        create_time = datetime.datetime.fromtimestamp(
+                            process.create_time()).strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # Find the detection name for this process's files
+                        detection_names = []
+                        for infected_file in infected_files:
+                            if infected_file.get("file_path") in exec_path or any(
+                                infected_file.get("file_path") in cmd_arg for cmd_arg in process.cmdline()):
+                                detection = infected_file.get("detection", "Unknown malware")
+                                if detection not in detection_names:
+                                    detection_names.append(detection)
+                        
+                        detection_info = ", ".join(detection_names) if detection_names else "Unknown malware"
+                        
+                        process_info = (
+                            f"PID: {pid}\n"
+                            f"Executable: {exec_path}\n"
+                            f"Command: {cmdline}\n"
+                            f"User: {username}\n"
+                            f"Created: {create_time}\n"
+                            f"Detection: {detection_info}\n"
+                            f"Detection time: {timestamp}\n"
+                            f"---\n"
+                        )
+                        f.write(process_info)
+                        
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        f.write(f"PID: {pid} (Unable to get process details - may have terminated)\n---\n")
+                    except Exception as e:
+                        f.write(f"PID: {pid} (Error getting process details: {str(e)})\n---\n")
+                
+            print(f"Malicious process information written to {MALWARE_PROCESS_FILE}")
+        except Exception as e:
+            print(f"Error writing malicious processes to file: {e}")
+
 
 if __name__ == "__main__":
     # Simple command line interface for testing
@@ -534,6 +611,10 @@ if __name__ == "__main__":
             result = scanner.scan_file(args.path)
             print(json.dumps(result, indent=2))
             
+            # Write malicious process info to file if the file is infected
+            if result.get("is_malicious", False):
+                scanner.write_malicious_processes_to_file([result])
+            
         elif os.path.isdir(args.path):
             result = scanner.scan_directory(args.path, recursive=args.recursive)
             
@@ -546,6 +627,9 @@ if __name__ == "__main__":
                 print("\nInfected files:")
                 for infected in result["infected_files"]:
                     print(f"  {infected['file_path']} - {infected.get('detection', 'Unknown')}")
+                
+                # Write malicious process information to file
+                scanner.write_malicious_processes_to_file(result["infected_files"])
             
     except Exception as e:
         print(f"Error: {str(e)}")

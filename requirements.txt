@@ -12,5 +12,9 @@ hashlib
 requests>=2.25.0
 pyclamd>=0.4.0
 pytest>=7.0.0
+<<<<<<< HEAD
 mock>=4.0.0
 >>>>>>> 6f285b4 (requirements.txt for pip packages)
+=======
+mock>=4.0.0 
+>>>>>>> 0fec604 (Enhance malware detection logging and process tracking)

@@ -8,12 +8,19 @@ import os
 import sys
 import json
 import argparse
+import psutil
+import datetime
 from typing import Dict, List, Optional, Set
 
 # Import other detection modules
 from entropy import EntropyAnalyzer
 from virustotalUpload import VirusTotalClient
 from LLMlogs import LogAnalyzer
+
+# Define path for the isolation data file
+MALWARE_PROCESS_FILE = os.environ.get("MALWARE_PROCESS_FILE", 
+                                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                               "..", "isolation", "malware_processes.txt"))
 
 class MalwareDetector:
     """Main malware detection class integrating all detection methods"""
@@ -256,6 +263,55 @@ class MalwareDetector:
             summary.append("✓ No malicious activity detected.")
             
         return "\n".join(summary)
+    
+    def write_malicious_processes_to_file(self, suspicious_pids: List[int]) -> None:
+        """
+        Write detected malicious processes to a file
+        
+        Args:
+            suspicious_pids: List of suspicious process IDs
+        """
+        if not suspicious_pids:
+            return
+        
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(MALWARE_PROCESS_FILE), exist_ok=True)
+            
+            with open(MALWARE_PROCESS_FILE, 'a') as f:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"\n--- Malicious processes detected at {timestamp} ---\n")
+                
+                for pid in suspicious_pids:
+                    try:
+                        # Get detailed process information
+                        process = psutil.Process(pid)
+                        exec_path = process.exe()
+                        cmdline = " ".join(process.cmdline())
+                        username = process.username()
+                        create_time = datetime.datetime.fromtimestamp(
+                            process.create_time()).strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # Write detailed process information
+                        process_info = (
+                            f"PID: {pid}\n"
+                            f"Executable: {exec_path}\n"
+                            f"Command: {cmdline}\n"
+                            f"User: {username}\n"
+                            f"Created: {create_time}\n"
+                            f"Detection time: {timestamp}\n"
+                            f"---\n"
+                        )
+                        f.write(process_info)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        # Process may have terminated or we don't have permission
+                        f.write(f"PID: {pid} (Unable to get process details - may have terminated)\n---\n")
+                    except Exception as e:
+                        f.write(f"PID: {pid} (Error getting process details: {str(e)})\n---\n")
+                        
+            print(f"Malicious process information written to {MALWARE_PROCESS_FILE}")
+        except Exception as e:
+            print(f"Error writing malicious processes to file: {e}")
 
 
 if __name__ == "__main__":
@@ -307,6 +363,7 @@ if __name__ == "__main__":
             
             if results.get("suspicious_pids"):
                 print(f"Suspicious processes (PIDs): {results['suspicious_pids']}")
+                detector.write_malicious_processes_to_file(results['suspicious_pids'])
         else:
             print("✓ No malicious indicators found in the file.")
             
@@ -323,6 +380,7 @@ if __name__ == "__main__":
             
             if results.get("suspicious_pids"):
                 print(f"Suspicious processes (PIDs): {results['suspicious_pids']}")
+                detector.write_malicious_processes_to_file(results['suspicious_pids'])
         else:
             print("✓ No suspicious files found.")
             
@@ -340,6 +398,7 @@ if __name__ == "__main__":
             
             if results.get("suspicious_pids"):
                 print(f"Suspicious processes (PIDs): {results['suspicious_pids']}")
+                detector.write_malicious_processes_to_file(results['suspicious_pids'])
         else:
             print("✓ No suspicious files found.")
             
@@ -354,6 +413,7 @@ if __name__ == "__main__":
             
             if results.get("suspicious_pids"):
                 print(f"Suspicious processes (PIDs): {results['suspicious_pids']}")
+                detector.write_malicious_processes_to_file(results['suspicious_pids'])
                 
             combined_analysis = results.get("combined_analysis", {})
             if combined_analysis.get("success"):
@@ -371,6 +431,9 @@ if __name__ == "__main__":
         summary = detector.get_detection_summary(results)
         print("\nScan complete. Results summary:")
         print(summary)
+        
+        if results.get("suspicious_pids"):
+            detector.write_malicious_processes_to_file(results['suspicious_pids'])
             
     # Show detailed results if requested
     if args.verbose and results:

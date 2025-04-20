@@ -8,8 +8,15 @@ High entropy often indicates encryption, packing, or obfuscation - common in mal
 import os
 import math
 import hashlib
+import datetime
+import psutil
 from collections import Counter
 from typing import Dict, Tuple, List, Optional
+
+# Path for storing malicious process data
+MALWARE_PROCESS_FILE = os.environ.get("MALWARE_PROCESS_FILE", 
+                                     os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                "..", "isolation", "malware_processes.txt"))
 
 class EntropyAnalyzer:
     """Class that handles entropy-based analysis of files"""
@@ -248,6 +255,31 @@ class EntropyAnalyzer:
             print(f"Error while scanning /proc: {str(e)}")
             
         return suspicious_pids
+    
+    def track_malicious_processes(self, suspicious_pids: List[int]) -> None:
+        """
+        Track malicious processes and log their details
+        
+        Args:
+            suspicious_pids: List of PIDs of suspicious processes
+        """
+        try:
+            with open(MALWARE_PROCESS_FILE, "a") as f:
+                for pid in suspicious_pids:
+                    try:
+                        process = psutil.Process(pid)
+                        process_info = {
+                            "pid": pid,
+                            "name": process.name(),
+                            "exe": process.exe(),
+                            "cmdline": process.cmdline(),
+                            "create_time": datetime.datetime.fromtimestamp(process.create_time()).isoformat()
+                        }
+                        f.write(f"{process_info}\n")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+        except Exception as e:
+            print(f"Error while tracking malicious processes: {str(e)}")
 
 
 if __name__ == "__main__":
@@ -281,5 +313,6 @@ if __name__ == "__main__":
             pids = analyzer.get_pids_for_suspicious_files(results)
             if pids:
                 print(f"\nProcesses using suspicious files: {pids}")
+                analyzer.track_malicious_processes(pids)
     else:
         print(f"Path {path} does not exist")
