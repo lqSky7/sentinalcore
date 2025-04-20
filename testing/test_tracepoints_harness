@@ -1,0 +1,60 @@
+#!/bin/bash
+# malware_test_harness.sh - Safe syscall trigger for analysis systems
+
+# 1. execve (implicit via shebang)
+echo "=== Starting syscall test harness ==="
+
+# 2. mkdir + chmod
+TEST_DIR="/tmp/.test_$(date +%s)"
+mkdir -p "$TEST_DIR"
+chmod 0700 "$TEST_DIR"
+
+# 3. openat + rename + unlink
+echo "test" > "$TEST_DIR/original.txt"
+mv "$TEST_DIR/original.txt" "$TEST_DIR/renamed.txt"
+rm "$TEST_DIR/renamed.txt"
+
+# 4. clone (background process)
+sleep 5 &
+
+# 5. mount tmpfs (user namespace mount)
+mkdir -p "$TEST_DIR/mnt"
+mount -t tmpfs -o size=1M tmpfs "$TEST_DIR/mnt" 2>/dev/null || true
+
+# 6. Networking (bind + connect + accept4)
+echo "=== Networking tests ==="
+nc -dl 127.0.0.1 4444 >/dev/null &
+NC_PID=$!
+sleep 1
+nc -zv 127.0.0.1 4444 2>/dev/null
+kill $NC_PID
+
+# 7. ptrace (via strace)
+strace -e inject=openat:error=EPERM ls >/dev/null 2>&1
+
+# 8. keyctl (user keyring)
+keyctl new user testkey "testpayload" @u 2>/dev/null || true
+
+# 9. capset (via helper)
+cat <<'EOF' > "$TEST_DIR/capset_test.c"
+#include <sys/capability.h>
+#include <unistd.h>
+int main() {
+    cap_value_t caps[] = {CAP_NET_BIND_SERVICE};
+    capset((cap_header_t){_LINUX_CAPABILITY_VERSION_3, 0}, 
+           (cap_data_t){.effective = 1 << CAP_NET_BIND_SERVICE});
+    return 0;
+}
+EOF
+gcc -o "$TEST_DIR/capset_test" "$TEST_DIR/capset_test.c" 2>/dev/null && "$TEST_DIR/capset_test"
+
+# 10. kill (signal test)
+kill -USR1 $$
+
+# 11. Cleanup
+echo "=== Cleaning up ==="
+umount "$TEST_DIR/mnt" 2>/dev/null || true
+rm -rf "$TEST_DIR"
+keyctl purge @u 2>/dev/null || true
+
+echo "=== Test completed ==="

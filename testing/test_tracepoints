@@ -1,0 +1,10 @@
+#!/bin/bash
+echo "Payload PID: $$"
+echo "Waiting 10 seconds for tracer attachment..."
+sleep 10  # Gives you ample time to launch tracer
+
+# Will definitely trigger execve
+/bin/echo "Test syscall" > /dev/null
+/bin/ls /tmp > /dev/null
+
+echo "Payload executed all operations"

@@ -1,0 +1,7 @@
+#!/bin/bash
+
+echo "[*] Bash malware test started."
+echo "[*] Running as PID: $$"
+sleep 120
+echo "[*] Bash malware test complete."
+
