@@ -1,0 +1,27 @@
+[project]
+name = "sentinalcore-main"
+version = "0.0.rc1"
+description = "soon"
+authors = [
+    {name = "Axiss"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10"
+package-mode = "false"
+dependencies = [
+    "requests (>=2.32.3,<3.0.0)",
+    "pyclamd (>=0.4.0,<0.5.0)",
+    "bcc (>=0.1.10,<0.2.0)"
+]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.5"
+mock = "^5.2.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
