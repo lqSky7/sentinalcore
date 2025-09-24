@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinal - Malware Analysis</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+            background-color: #ffffff;
+            color: #333333;
+            line-height: 1.4;
+            font-size: 14px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border: 2px solid #333333;
+            padding: 20px;
+            background-color: #f8f8f8;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .header p {
+            color: #666666;
+            margin: 5px 0;
+        }
+
+        .warning {
+            color: #cc0000;
+            font-weight: bold;
+        }
+
+        .analysis-form {
+            background-color: #f8f8f8;
+            border: 2px solid #333333;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333333;
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            color: #333333;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        .form-group input[type="text"]:focus,
+        .form-group input[type="number"]:focus {
+            outline: none;
+            border-color: #666666;
+            background-color: #f0f0f0;
+        }
+
+        .btn {
+            background-color: #ffffff;
+            color: #333333;
+            border: 2px solid #333333;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #333333;
+            color: #ffffff;
+        }
+
+        .btn:disabled {
+            background-color: #cccccc;
+            color: #666666;
+            cursor: not-allowed;
+            border-color: #cccccc;
+        }
+
+        .status {
+            background-color: #f8f8f8;
+            border: 2px solid #333333;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .status.analyzing {
+            background-color: #fff3cd;
+            border-color: #ffeaa7;
+            color: #856404;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status.error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .status.success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.8; }
+            50% { opacity: 1; }
+            100% { opacity: 0.8; }
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results-section {
+            background-color: #f8f8f8;
+            border: 2px solid #333333;
+            margin-bottom: 20px;
+            padding: 20px;
+        }
+
+        .results-section h3 {
+            color: #333333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #333333;
+            padding-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .metric {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333333;
+            margin-bottom: 5px;
+        }
+
+        .metric-label {
+            color: #666666;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .process-tree {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            font-size: 12px;
+            overflow-x: auto;
+            min-height: 100px;
+        }
+
+        .process-node {
+            margin-left: 20px;
+            margin-bottom: 5px;
+            color: #333333;
+            padding: 2px 0;
+        }
+
+        .process-node.root {
+            margin-left: 0;
+            font-weight: bold;
+        }
+
+        .process-node.child {
+            color: #666666;
+        }
+
+        .syscall-list {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-size: 12px;
+            min-height: 100px;
+        }
+
+        .syscall-item {
+            margin-bottom: 3px;
+            padding: 3px 6px;
+            border-left: 3px solid #cccccc;
+            color: #333333;
+        }
+
+        .syscall-item.suspicious {
+            border-left-color: #cc0000;
+            background-color: #fff5f5;
+        }
+
+        .suspicious-patterns {
+            background-color: #fff5f5;
+            border: 2px solid #cc0000;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .suspicious-patterns h3 {
+            color: #cc0000;
+            border-bottom-color: #cc0000;
+        }
+
+        .pattern-item {
+            color: #cc0000;
+            margin: 8px 0;
+            font-weight: bold;
+        }
+
+        .log-output {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            white-space: pre-wrap;
+            font-size: 11px;
+            max-height: 250px;
+            overflow-y: auto;
+            color: #333333;
+            min-height: 100px;
+        }
+
+        .platform-info {
+            background-color: #e9ecef;
+            border: 2px solid #333333;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 12px;
+            color: #495057;
+        }
+
+        @media (max-width: 768px) {
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SENTINAL</h1>
+            <p>Cross-Platform Malware Analysis Framework</p>
+            <p class="warning">⚠️ WARNING: Execute potentially malicious files only in isolated environments ⚠️</p>
+        </div>
+
+        <div class="platform-info" id="platformInfo">
+            Loading platform information...
+        </div>
+
+        <div class="analysis-form">
+            <h3>File Analysis</h3>
+            <div class="form-group">
+                <label for="filePath">File Path:</label>
+                <input type="text" id="filePath" placeholder="/path/to/suspicious/file" value="/Users/ca5/Desktop/sentinal/samples/test_malware.py">
+            </div>
+            <div class="form-group">
+                <label for="timeout">Timeout (seconds):</label>
+                <input type="number" id="timeout" value="30" min="5" max="300">
+            </div>
+            <button class="btn" id="analyzeBtn" onclick="startAnalysis()">ANALYZE FILE</button>
+        </div>
+
+        <div class="status" id="status" style="display: none;">
+            Ready for analysis
+        </div>
+
+        <div class="results" id="results">
+            <!-- Suspicious patterns section -->
+            <div class="suspicious-patterns" id="suspiciousPatterns" style="display: none;">
+                <h3>🚨 SUSPICIOUS PATTERNS DETECTED</h3>
+                <div id="patternList"></div>
+            </div>
+
+            <!-- Overview metrics -->
+            <div class="results-section">
+                <h3>ANALYSIS OVERVIEW</h3>
+                <div class="results-grid">
+                    <div class="metric">
+                        <div class="metric-value" id="totalSyscalls">0</div>
+                        <div class="metric-label">Total System Calls</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="uniqueSyscalls">0</div>
+                        <div class="metric-label">Unique System Calls</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="totalProcesses">0</div>
+                        <div class="metric-label">Processes Spawned</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="analysisTime">0s</div>
+                        <div class="metric-label">Analysis Duration</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="fileOps">0</div>
+                        <div class="metric-label">File Operations</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="networkOps">0</div>
+                        <div class="metric-label">Network Operations</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Process Tree -->
+            <div class="results-section">
+                <h3>PROCESS TREE</h3>
+                <div class="process-tree" id="processTree">
+                    No process data available
+                </div>
+            </div>
+
+            <!-- System Calls -->
+            <div class="results-section">
+                <h3>SYSTEM CALLS</h3>
+                <div class="syscall-list" id="syscallList">
+                    No syscall data available
+                </div>
+            </div>
+
+            <!-- Monitor Output -->
+            <div class="results-section">
+                <h3>EXECUTION OUTPUT</h3>
+                <div class="log-output" id="monitorOutput">
+                    No output available
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let analysisInProgress = false;
+
+        // Load platform information on page load
+        window.addEventListener('load', function() {
+            loadPlatformInfo();
+        });
+
+        async function loadPlatformInfo() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                const platformInfo = document.getElementById('platformInfo');
+                platformInfo.textContent = `Platform: ${status.platform} on ${status.architecture} | Analyses completed: ${status.analyses_completed}`;
+            } catch (error) {
+                document.getElementById('platformInfo').textContent = 'Platform information unavailable';
+            }
+        }
+
+        function showStatus(message, type = 'info') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.style.display = 'block';
+            
+            // Reset classes
+            statusEl.className = 'status';
+            
+            if (type === 'analyzing') {
+                statusEl.classList.add('analyzing');
+            } else if (type === 'error') {
+                statusEl.classList.add('error');
+            } else if (type === 'success') {
+                statusEl.classList.add('success');
+            }
+        }
+
+        function hideStatus() {
+            document.getElementById('status').style.display = 'none';
+        }
+
+        async function startAnalysis() {
+            if (analysisInProgress) return;
+
+            const filePath = document.getElementById('filePath').value.trim();
+            const timeout = parseInt(document.getElementById('timeout').value);
+
+            if (!filePath) {
+                showStatus('Please enter a file path', 'error');
+                return;
+            }
+
+            analysisInProgress = true;
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'ANALYZING...';
+
+            showStatus('Starting analysis...', 'analyzing');
+            document.getElementById('results').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        file_path: filePath,
+                        timeout: timeout
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Analysis failed');
+                }
+
+                showStatus('Analysis completed successfully!', 'success');
+                displayResults(result);
+                loadPlatformInfo(); // Refresh platform info
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+                console.error('Analysis error:', error);
+            } finally {
+                analysisInProgress = false;
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'ANALYZE FILE';
+            }
+        }
+
+        function displayResults(data) {
+            // Show results section
+            document.getElementById('results').style.display = 'block';
+
+            // Update metrics
+            document.getElementById('totalSyscalls').textContent = data.total_syscalls || 0;
+            document.getElementById('uniqueSyscalls').textContent = data.syscall_analysis?.unique_syscalls || 0;
+            document.getElementById('totalProcesses').textContent = data.total_processes || 0;
+            document.getElementById('analysisTime').textContent = `${data.duration?.toFixed(2) || 0}s`;
+            document.getElementById('fileOps').textContent = data.syscall_analysis?.file_operations || 0;
+            document.getElementById('networkOps').textContent = data.syscall_analysis?.network_operations || 0;
+
+            // Show suspicious patterns if any
+            const suspiciousPatterns = data.syscall_analysis?.suspicious_patterns || [];
+            if (suspiciousPatterns.length > 0) {
+                const patternsEl = document.getElementById('suspiciousPatterns');
+                const patternListEl = document.getElementById('patternList');
+                
+                patternListEl.innerHTML = suspiciousPatterns
+                    .map(pattern => `<div class="pattern-item">⚠️ ${pattern}</div>`)
+                    .join('');
+                
+                patternsEl.style.display = 'block';
+            } else {
+                document.getElementById('suspiciousPatterns').style.display = 'none';
+            }
+
+            // Display process tree
+            displayProcessTree(data.process_tree);
+
+            // Display system calls
+            displaySyscalls(data.syscalls || []);
+
+            // Display execution output
+            displayExecutionOutput(data.monitor_output);
+
+            // Scroll to results
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function displayProcessTree(processTree) {
+            const treeEl = document.getElementById('processTree');
+            
+            if (!processTree || !processTree.tree) {
+                treeEl.textContent = 'No process tree data available';
+                return;
+            }
+
+            let treeHTML = '';
+            
+            function renderProcess(pid, level = 0) {
+                const process = processTree.tree[pid];
+                if (!process) return '';
+
+                const indent = '  '.repeat(level);
+                const status = process.status === 'exited' ? '●' : '○';
+                const isRoot = level === 0;
+                const cssClass = isRoot ? 'root' : 'child';
+                
+                let html = `<div class="process-node ${cssClass}">`;
+                html += `${indent}${status} PID:${pid} (${process.executable}) [${process.status}]`;
+                html += `</div>`;
+
+                // Render children
+                if (process.children && process.children.length > 0) {
+                    for (const childPid of process.children) {
+                        html += renderProcess(childPid, level + 1);
+                    }
+                }
+
+                return html;
+            }
+
+            // Render all root processes
+            for (const rootPid of processTree.roots || []) {
+                treeHTML += renderProcess(rootPid);
+            }
+
+            treeEl.innerHTML = treeHTML || 'No processes to display';
+        }
+
+        function displaySyscalls(syscalls) {
+            const listEl = document.getElementById('syscallList');
+            
+            if (!syscalls || syscalls.length === 0) {
+                listEl.textContent = 'No syscall data available';
+                return;
+            }
+
+            const suspiciousCalls = new Set(['execve', 'socket', 'connect', 'unlink', 'kill', 'fork', 'clone']);
+
+            const syscallHTML = syscalls.map(sc => {
+                const timestamp = new Date(sc.timestamp * 1000).toLocaleTimeString();
+                const isSuspicious = suspiciousCalls.has(sc.name);
+                const cssClass = isSuspicious ? 'syscall-item suspicious' : 'syscall-item';
+                
+                return `<div class="${cssClass}">
+                    ${timestamp} | PID:${sc.pid} | ${sc.name}()
+                </div>`;
+            }).join('');
+
+            listEl.innerHTML = syscallHTML;
+        }
+
+        function displayExecutionOutput(output) {
+            const outputEl = document.getElementById('monitorOutput');
+            
+            if (!output) {
+                outputEl.textContent = 'No execution output available';
+                return;
+            }
+
+            let displayText = '';
+            
+            if (output.stdout) {
+                displayText += '=== STDOUT ===\n' + output.stdout + '\n\n';
+            }
+            
+            if (output.stderr) {
+                displayText += '=== STDERR ===\n' + output.stderr + '\n\n';
+            }
+
+            if (output.return_code !== undefined) {
+                displayText += `=== EXIT CODE ===\n${output.return_code}`;
+            }
+
+            outputEl.textContent = displayText || 'No output captured';
+        }
+
+        // Allow Enter key to start analysis
+        document.getElementById('filePath').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                startAnalysis();
+            }
+        });
+    </script>
+</body>
+</html>
