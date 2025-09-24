@@ -11,6 +11,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
 from dotenv import load_dotenv
+from static_analyzer import StaticAnalyzer
 
 # Load environment variables
 load_dotenv()
@@ -550,7 +551,7 @@ Keep under 400 words."""
                                 ai_analysis = content['parts'][0]['text']
                                 return {
                                     'analysis': ai_analysis,
-                                    'model': 'gemini-1.5-flash',
+                                    'model': 'gemini-2.5-flash',
                                     'timestamp': datetime.now().isoformat(),
                                     'attempt': attempt + 1,
                                     'timeout_used': timeout
@@ -587,8 +588,9 @@ Keep under 400 words."""
         except Exception as e:
             return {'error': f'AI analysis failed: {str(e)}'}
 
-# Global analysis engine
+# Global analysis engines
 analysis_engine = SimpleAnalysisEngine()
+static_analyzer = StaticAnalyzer()
 
 @app.route('/')
 def index():
@@ -643,13 +645,101 @@ def get_results(analysis_id):
     else:
         return jsonify({'error': 'Analysis not found'}), 404
 
+@app.route('/api/static-scan', methods=['POST'])
+def static_scan():
+    data = request.get_json()
+    
+    if not data or 'file_path' not in data:
+        return jsonify({'error': 'file_path is required'}), 400
+    
+    file_path = data['file_path']
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+    
+    print(f"Static scanning file: {file_path}")
+    
+    # Perform static analysis
+    result = static_analyzer.quick_static_scan(file_path)
+    
+    return jsonify(result)
+
+@app.route('/api/directory-scan', methods=['POST'])
+def directory_scan():
+    data = request.get_json()
+    
+    if not data or 'directory_path' not in data:
+        return jsonify({'error': 'directory_path is required'}), 400
+    
+    directory_path = data['directory_path']
+    recursive = data.get('recursive', False)
+    
+    if not os.path.exists(directory_path) or not os.path.isdir(directory_path):
+        return jsonify({'error': 'Directory not found'}), 404
+    
+    print(f"Scanning directory: {directory_path} (recursive: {recursive})")
+    
+    # Perform directory scan
+    result = static_analyzer.scan_directory(directory_path, recursive)
+    
+    return jsonify(result)
+
+@app.route('/api/entropy-analysis', methods=['POST'])
+def entropy_analysis():
+    data = request.get_json()
+    
+    if not data or 'file_path' not in data:
+        return jsonify({'error': 'file_path is required'}), 400
+    
+    file_path = data['file_path']
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+    
+    print(f"Entropy analysis for: {file_path}")
+    
+    # Perform entropy analysis
+    result = static_analyzer.analyze_file_entropy(file_path)
+    
+    return jsonify(result)
+
+@app.route('/api/hash-lookup', methods=['POST'])
+def hash_lookup():
+    data = request.get_json()
+    
+    if not data or 'file_path' not in data:
+        return jsonify({'error': 'file_path is required'}), 400
+    
+    file_path = data['file_path']
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+    
+    print(f"Hash lookup for: {file_path}")
+    
+    # Calculate hashes
+    hashes = static_analyzer.get_file_hash(file_path)
+    if 'error' in hashes:
+        return jsonify(hashes), 500
+    
+    # Check threat intelligence
+    results = {'hashes': hashes}
+    
+    if 'sha256' in hashes:
+        results['virustotal'] = static_analyzer.check_virustotal(hashes['sha256'])
+        time.sleep(1)  # Rate limiting
+        results['malware_bazaar'] = static_analyzer.check_malware_bazaar(hashes['sha256'])
+    
+    return jsonify(results)
+
 @app.route('/api/status')
 def get_status():
     return jsonify({
         'status': 'running',
         'platform': analysis_engine.platform,
         'architecture': analysis_engine.architecture,
-        'analyses_completed': len(analysis_engine.results)
+        'analyses_completed': len(analysis_engine.results),
+        'static_analyzer': 'available'
     })
 
 if __name__ == '__main__':

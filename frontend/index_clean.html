@@ -5,6 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sentinal - Malware Analysis</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+        
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #2a2a2a;
+            --bg-card: #151515;
+            --bg-card-hover: #1f1f1f;
+            --text-primary: #ffffff;
+            --text-secondary: #b4b4b4;
+            --text-muted: #666666;
+            --border-primary: #333333;
+            --border-secondary: #404040;
+            --accent-primary: #ffffff;
+            --accent-danger: #ff4444;
+            --accent-warning: #ffaa00;
+            --accent-success: #00ff88;
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-xl: 20px;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,41 +38,65 @@
         }
 
         body {
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
-            background-color: #ffffff;
-            color: #333333;
-            line-height: 1.4;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            line-height: 1.6;
             font-size: 14px;
+            min-height: 100vh;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+        }
+
+        .grotesk {
+            font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
         }
 
         .container {
             max-width: 1400px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 24px;
+            gap: 24px;
+            display: flex;
+            flex-direction: column;
         }
 
         .header {
             text-align: center;
-            margin-bottom: 30px;
-            border: 2px solid #333333;
-            padding: 20px;
-            background-color: #f8f8f8;
+            margin-bottom: 32px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-primary);
+            border-radius: var(--radius-xl);
+            padding: 32px;
+            box-shadow: var(--shadow-md);
+            backdrop-filter: blur(10px);
         }
 
         .header h1 {
-            font-size: 24px;
-            margin-bottom: 10px;
-            font-weight: bold;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
         }
 
         .header p {
-            color: #666666;
-            margin: 5px 0;
+            color: var(--text-secondary);
+            margin: 8px 0;
+            font-weight: 400;
+            font-size: 16px;
         }
 
         .warning {
-            color: #cc0000;
-            font-weight: bold;
+            color: var(--accent-danger);
+            font-weight: 600;
+            font-size: 15px;
         }
 
         .analysis-form {
@@ -288,17 +338,33 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>SENTINAL</h1>
-            <p>Cross-Platform Malware Analysis Framework</p>
-            <p class="warning">⚠️ WARNING: Execute potentially malicious files only in isolated environments ⚠️</p>
+            <h1>SENTINAL CORE</h1>
         </div>
 
         <div class="platform-info" id="platformInfo">
             Loading platform information...
         </div>
 
+        <!-- Analysis Mode Selection -->
         <div class="analysis-form">
-            <h3>File Analysis</h3>
+            <h3>Analysis Mode</h3>
+            <div class="form-group">
+                <label>
+                    <input type="radio" name="analysisMode" value="dynamic" checked onchange="toggleAnalysisMode()"> 
+                    Dynamic Analysis (Execute File)
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="radio" name="analysisMode" value="static" onchange="toggleAnalysisMode()"> 
+                    Static Analysis (No Execution)
+                </label>
+            </div>
+        </div>
+
+        <!-- Dynamic Analysis Form -->
+        <div class="analysis-form" id="dynamicForm">
+            <h3>Dynamic File Analysis</h3>
             <div class="form-group">
                 <label for="filePath">File Path:</label>
                 <input type="text" id="filePath" placeholder="/path/to/suspicious/file" value="/Users/ca5/Desktop/sentinal/samples/test_malware.py">
@@ -308,6 +374,36 @@
                 <input type="number" id="timeout" value="30" min="5" max="300">
             </div>
             <button class="btn" id="analyzeBtn" onclick="startAnalysis()">ANALYZE FILE</button>
+        </div>
+
+        <!-- Static Analysis Forms -->
+        <div class="analysis-form" id="staticForm" style="display: none;">
+            <h3>Static File Analysis</h3>
+            <div class="form-group">
+                <label for="staticFilePath">File Path:</label>
+                <input type="text" id="staticFilePath" placeholder="/path/to/suspicious/file" value="/Users/ca5/Desktop/sentinal/samples/static_test_malware.py">
+            </div>
+            <div class="form-group">
+                <button class="btn" onclick="staticAnalyze()">STATIC SCAN</button>
+                <button class="btn" onclick="entropyAnalysis()">ENTROPY ANALYSIS</button>
+                <button class="btn" onclick="hashLookup()">HASH LOOKUP</button>
+            </div>
+        </div>
+
+        <div class="analysis-form" id="directoryForm" style="display: none;">
+            <h3>Directory Quick Scan</h3>
+            <div class="form-group">
+                <label for="directoryPath">Directory Path:</label>
+                <input type="text" id="directoryPath" placeholder="/path/to/directory" value="/Users/ca5/Desktop/sentinal/samples">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="recursiveScan"> Recursive Scan
+                </label>
+            </div>
+            <div class="form-group">
+                <button class="btn" onclick="directoryScan()">SCAN DIRECTORY</button>
+            </div>
         </div>
 
         <div class="status" id="status" style="display: none;">
@@ -398,6 +494,18 @@
                     <div class="log-output" id="networkConnectionsDetails">
                         No connections monitored
                     </div>
+                </div>
+            </div>
+
+            <!-- AI Analysis -->
+            <div class="results-section" id="aiAnalysisSection" style="display: none;">
+                <h3>AI ANALYSIS</h3>
+                <div style="margin-bottom: 15px;">
+                    <button class="btn" id="aiAnalyzeBtn" onclick="performAIAnalysis()">ANALYZE WITH AI</button>
+                    <span id="aiStatus" style="margin-left: 10px; color: #666666;"></span>
+                </div>
+                <div class="log-output" id="aiAnalysisResults">
+                    Click "ANALYZE WITH AI" to get intelligent threat assessment
                 </div>
             </div>
 
@@ -541,6 +649,10 @@
 
             // Display execution output
             displayExecutionOutput(data.monitor_output);
+
+            // Show AI analysis section for dynamic analysis
+            document.getElementById('aiAnalysisSection').style.display = 'block';
+            window.currentAnalysisData = data; // Store for AI analysis
 
             // Scroll to results
             document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
@@ -694,6 +806,421 @@
                 connectionsText = 'No network connections were monitored during execution.';
             }
             connectionsEl.textContent = connectionsText;
+        }
+
+        // Toggle between analysis modes
+        function toggleAnalysisMode() {
+            const mode = document.querySelector('input[name="analysisMode"]:checked').value;
+            const dynamicForm = document.getElementById('dynamicForm');
+            const staticForm = document.getElementById('staticForm');
+            const directoryForm = document.getElementById('directoryForm');
+            const aiAnalysisSection = document.getElementById('aiAnalysisSection');
+            
+            if (mode === 'dynamic') {
+                dynamicForm.style.display = 'block';
+                staticForm.style.display = 'none';
+                directoryForm.style.display = 'none';
+            } else {
+                dynamicForm.style.display = 'none';
+                staticForm.style.display = 'block';
+                directoryForm.style.display = 'block';
+                // Hide AI analysis section for static mode
+                aiAnalysisSection.style.display = 'none';
+            }
+            
+            // Clear results when switching modes
+            clearResults();
+        }
+        
+        // Static analysis functions
+        async function staticAnalyze() {
+            const filePath = document.getElementById('staticFilePath').value.trim();
+            
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+            
+            showStatus('Performing static analysis...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/static-scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayStaticResults(result);
+                } else {
+                    showStatus(`Static analysis failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function entropyAnalysis() {
+            const filePath = document.getElementById('staticFilePath').value.trim();
+            
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+            
+            showStatus('Analyzing file entropy...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/entropy-analysis', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayEntropyResults(result);
+                } else {
+                    showStatus(`Entropy analysis failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function hashLookup() {
+            const filePath = document.getElementById('staticFilePath').value.trim();
+            
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+            
+            showStatus('Calculating hashes and checking threat intelligence...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/hash-lookup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayHashResults(result);
+                } else {
+                    showStatus(`Hash lookup failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function directoryScan() {
+            const directoryPath = document.getElementById('directoryPath').value.trim();
+            const recursive = document.getElementById('recursiveScan').checked;
+            
+            if (!directoryPath) {
+                alert('Please enter a directory path');
+                return;
+            }
+            
+            showStatus('Scanning directory...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/directory-scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        directory_path: directoryPath,
+                        recursive: recursive
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayDirectoryResults(result);
+                } else {
+                    showStatus(`Directory scan failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        function displayStaticResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            // Build static analysis results HTML
+            let html = `
+                <div class="results-section">
+                    <h3>STATIC ANALYSIS RESULTS</h3>
+                    <div class="log-output">
+                        <strong>File:</strong> ${data.file_path}
+                        <strong>Analysis Time:</strong> ${new Date(data.timestamp).toLocaleString()}
+                        <strong>Risk Level:</strong> ${data.risk_assessment?.risk_level || 'Unknown'}
+                        <strong>Risk Score:</strong> ${data.risk_assessment?.risk_score || 0}/100
+                        
+                        <strong>File Information:</strong>
+                        Size: ${data.file_info?.size || 'Unknown'} bytes
+                        Extension: ${data.file_info?.extension || 'Unknown'}
+                        
+                        <strong>Entropy Analysis:</strong>
+                        Overall Entropy: ${data.entropy?.overall_entropy || 'N/A'}
+                        Suspicion Level: ${data.entropy?.suspicion_level || 'Unknown'}
+                        ${data.entropy?.suspicion_reasons?.length > 0 ? 'Reasons: ' + data.entropy.suspicion_reasons.join(', ') : ''}
+                        
+                        <strong>File Hashes:</strong>
+                        MD5: ${data.hashes?.md5 || 'N/A'}
+                        SHA1: ${data.hashes?.sha1 || 'N/A'}
+                        SHA256: ${data.hashes?.sha256 || 'N/A'}
+                        
+                        <strong>Threat Intelligence:</strong>
+                        ${data.virustotal?.found ? `VirusTotal: ${data.virustotal.positives}/${data.virustotal.total} detections` : 'VirusTotal: Not found'}
+                        ${data.malware_bazaar?.found ? `MalwareBazaar: ${data.malware_bazaar.malware_family}` : 'MalwareBazaar: Not found'}
+                        
+                        <strong>String Analysis:</strong>
+                        Total Strings: ${data.strings?.total_strings || 0}
+                        Suspicious Strings: ${data.strings?.suspicious_strings?.length || 0}
+                        
+                        ${data.strings?.suspicious_strings?.length > 0 ? 
+                            '<strong>Suspicious Strings Found:</strong>\\n' + 
+                            data.strings.suspicious_strings.slice(0, 10).map(s => '  - ' + s).join('\\n') : ''}
+                        
+                        ${data.risk_assessment?.risk_factors?.length > 0 ? 
+                            '<strong>Risk Factors:</strong>\\n' + 
+                            data.risk_assessment.risk_factors.map(f => '  • ' + f).join('\\n') : ''}
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function displayEntropyResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            let html = `
+                <div class="results-section">
+                    <h3>ENTROPY ANALYSIS</h3>
+                    <div class="log-output">
+                        <strong>File:</strong> ${data.file_path || 'Unknown'}
+                        <strong>File Size:</strong> ${data.file_size || 0} bytes
+                        
+                        <strong>Entropy Metrics:</strong>
+                        Overall Entropy: ${data.overall_entropy || 'N/A'} (0-8 scale)
+                        Average Chunk Entropy: ${data.average_chunk_entropy || 'N/A'}
+                        Entropy Variance: ${data.entropy_variance || 'N/A'}
+                        Chunks Analyzed: ${data.chunk_count || 0}
+                        
+                        <strong>Suspicion Assessment:</strong>
+                        Level: ${data.suspicion_level || 'Unknown'}
+                        ${data.suspicion_reasons?.length > 0 ? 
+                            'Reasons:\\n' + data.suspicion_reasons.map(r => '  • ' + r).join('\\n') : 'No specific concerns'}
+                        
+                        <strong>Interpretation:</strong>
+                        • Entropy 0-3: Low (plain text, repetitive data)
+                        • Entropy 3-6: Medium (mixed content, some compression)
+                        • Entropy 6-7.5: High (compressed, encoded data)
+                        • Entropy 7.5-8: Very High (encrypted, packed malware)
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function displayHashResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            let html = `
+                <div class="results-section">
+                    <h3>HASH LOOKUP RESULTS</h3>
+                    <div class="log-output">
+                        <strong>File Hashes:</strong>
+                        MD5: ${data.hashes?.md5 || 'N/A'}
+                        SHA1: ${data.hashes?.sha1 || 'N/A'}
+                        SHA256: ${data.hashes?.sha256 || 'N/A'}
+                        
+                        <strong>VirusTotal Results:</strong>
+                        ${data.virustotal?.found ? `
+                        Status: FOUND (⚠️ MALICIOUS)
+                        Detections: ${data.virustotal.positives}/${data.virustotal.total}
+                        Scan Date: ${data.virustotal.scan_date || 'Unknown'}
+                        Detection Names: ${data.virustotal.detection_names?.slice(0, 5).join(', ') || 'None'}
+                        ${data.virustotal.permalink ? 'Report: ' + data.virustotal.permalink : ''}
+                        ` : data.virustotal?.error ? 
+                        `Error: ${data.virustotal.error}` : 
+                        'Status: NOT FOUND (Clean)'}
+                        
+                        <strong>MalwareBazaar Results:</strong>
+                        ${data.malware_bazaar?.found ? `
+                        Status: FOUND (⚠️ KNOWN MALWARE)
+                        Malware Family: ${data.malware_bazaar.malware_family || 'Unknown'}
+                        File Type: ${data.malware_bazaar.file_type || 'Unknown'}
+                        First Seen: ${data.malware_bazaar.first_seen || 'Unknown'}
+                        Tags: ${data.malware_bazaar.tags?.join(', ') || 'None'}
+                        ` : data.malware_bazaar?.error ? 
+                        `Error: ${data.malware_bazaar.error}` : 
+                        'Status: NOT FOUND (Clean)'}
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function displayDirectoryResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            let html = `
+                <div class="results-section">
+                    <h3>DIRECTORY SCAN RESULTS</h3>
+                    <div class="log-output">
+                        <strong>Directory:</strong> ${data.directory || 'Unknown'}
+                        <strong>Scan Time:</strong> ${new Date(data.scan_timestamp).toLocaleString()}
+                        <strong>Total Files:</strong> ${data.total_files || 0}
+                        
+                        <strong>Summary:</strong>
+                        Detection Rate: ${data.summary?.detection_rate || '0%'}
+                        Total Detections: ${data.summary?.total_detections || 0}
+                        
+                        Risk Distribution:
+                        ${data.summary?.risk_distribution ? Object.entries(data.summary.risk_distribution)
+                            .map(([level, count]) => `  ${level}: ${count} files`).join('\\n') : 'N/A'}
+                        
+                        File Types Found:
+                        ${data.summary?.file_types ? Object.entries(data.summary.file_types)
+                            .map(([ext, count]) => `  ${ext || 'no extension'}: ${count} files`).join('\\n') : 'N/A'}
+                        
+                        <strong>High Risk Files:</strong>
+                        ${data.results?.filter(r => r.risk_assessment?.risk_level === 'High')
+                            .slice(0, 10)
+                            .map(r => `• ${r.file_path} (Score: ${r.risk_assessment.risk_score}/100)`)
+                            .join('\\n') || 'None detected'}
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('aiAnalysisSection').style.display = 'none';
+            // Clear stored analysis data
+            window.currentAnalysisData = null;
+        }
+
+        // AI Analysis function - uses existing backend _perform_ai_analysis
+        async function performAIAnalysis() {
+            if (!window.currentAnalysisData) {
+                document.getElementById('aiAnalysisResults').textContent = 'No analysis data available. Run dynamic analysis first.';
+                return;
+            }
+
+            const aiBtn = document.getElementById('aiAnalyzeBtn');
+            const aiStatus = document.getElementById('aiStatus');
+            const aiResults = document.getElementById('aiAnalysisResults');
+
+            // Show loading state
+            aiBtn.disabled = true;
+            aiBtn.textContent = 'ANALYZING...';
+            aiStatus.textContent = 'Contacting AI analysis service...';
+            aiResults.textContent = 'Processing analysis data with AI...';
+
+            try {
+                const response = await fetch('/api/ai-analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        analysis_data: window.currentAnalysisData
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.ai_analysis) {
+                    if (result.ai_analysis.error) {
+                        aiResults.textContent = `AI Analysis Error: ${result.ai_analysis.error}`;
+                        aiStatus.textContent = 'Analysis failed';
+                    } else {
+                        // Display AI analysis results with markdown formatting
+                        displayAIAnalysis(result.ai_analysis);
+                        aiStatus.textContent = `Analysis completed (${result.ai_analysis.model || 'Gemini'})`;
+                    }
+                } else {
+                    aiResults.textContent = `Error: ${result.error || 'Unknown error occurred'}`;
+                    aiStatus.textContent = 'Analysis failed';
+                }
+            } catch (error) {
+                aiResults.textContent = `Network Error: ${error.message}`;
+                aiStatus.textContent = 'Connection failed';
+                console.error('AI Analysis error:', error);
+            } finally {
+                aiBtn.disabled = false;
+                aiBtn.textContent = 'ANALYZE WITH AI';
+            }
+        }
+
+        function displayAIAnalysis(aiData) {
+            const aiResults = document.getElementById('aiAnalysisResults');
+            
+            if (aiData.analysis) {
+                // Convert markdown-like formatting to HTML for better display
+                let analysis = aiData.analysis;
+                
+                // Convert markdown headers
+                analysis = analysis.replace(/## (.*)/g, '<strong style="font-size: 16px; color: #333; display: block; margin: 15px 0 10px 0; border-bottom: 1px solid #ccc; padding-bottom: 5px;">$1</strong>');
+                analysis = analysis.replace(/### (.*)/g, '<strong style="color: #555; display: block; margin: 10px 0 5px 0;">$1</strong>');
+                
+                // Convert markdown bold
+                analysis = analysis.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                
+                // Convert markdown bullets
+                analysis = analysis.replace(/^- (.*$)/gim, '• $1');
+                
+                // Convert newlines to breaks for proper display
+                analysis = analysis.replace(/\n/g, '<br>');
+                
+                aiResults.innerHTML = `
+                    <div style="line-height: 1.6;">
+                        ${analysis}
+                    </div>
+                    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee; font-size: 12px; color: #666;">
+                        <strong>Analysis Details:</strong><br>
+                        Model: ${aiData.model || 'Unknown'}<br>
+                        Timestamp: ${aiData.timestamp ? new Date(aiData.timestamp).toLocaleString() : 'Unknown'}<br>
+                        ${aiData.attempt ? `Attempt: ${aiData.attempt}` : ''}
+                        ${aiData.timeout_used ? `Timeout: ${aiData.timeout_used}s` : ''}
+                    </div>
+                `;
+            } else {
+                aiResults.textContent = 'No analysis content received from AI service.';
+            }
         }
 
         // Allow Enter key to start analysis

@@ -932,7 +932,7 @@ Format your response clearly with headers and bullet points for easy reading.
                     ai_analysis = result['candidates'][0]['content']['parts'][0]['text']
                     return {
                         'analysis': ai_analysis,
-                        'model': 'gemini-pro',
+                        'model': 'gemini-2.5-pro',
                         'timestamp': datetime.now().isoformat()
                     }
                 else:
