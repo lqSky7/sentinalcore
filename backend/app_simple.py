@@ -56,9 +56,47 @@ class SimpleAnalysisEngine:
             
             # Monitor during execution
             start_memory = 0
+            network_requests = []
+            monitored_connections = []
+            
             try:
                 proc_info = psutil.Process(process.pid)
                 start_memory = proc_info.memory_info().rss
+                
+                # Start network monitoring thread
+                monitoring_active = True
+                def monitor_network():
+                    seen_connections = set()
+                    while monitoring_active:
+                        try:
+                            current_connections = psutil.net_connections()
+                            for conn in current_connections:
+                                # Create connection signature
+                                conn_sig = (
+                                    conn.family.name if hasattr(conn.family, 'name') else str(conn.family),
+                                    conn.type.name if hasattr(conn.type, 'name') else str(conn.type),
+                                    f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
+                                    f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
+                                    conn.status
+                                )
+                                
+                                if conn_sig not in seen_connections and conn.raddr:
+                                    seen_connections.add(conn_sig)
+                                    monitored_connections.append({
+                                        'timestamp': time.time(),
+                                        'family': conn_sig[0],
+                                        'type': conn_sig[1], 
+                                        'local_addr': conn_sig[2],
+                                        'remote_addr': conn_sig[3],
+                                        'status': conn_sig[4],
+                                        'remote_host': self._resolve_hostname(conn.raddr.ip) if conn.raddr else None
+                                    })
+                        except:
+                            pass
+                        time.sleep(0.1)
+                
+                network_thread = threading.Thread(target=monitor_network, daemon=True)
+                network_thread.start()
             except:
                 pass
             
@@ -74,6 +112,9 @@ class SimpleAnalysisEngine:
                 else:
                     process.kill()
                 stdout, stderr = process.communicate()
+            finally:
+                # Stop network monitoring
+                monitoring_active = False
             
             end_time = datetime.now()
             
@@ -153,6 +194,17 @@ class SimpleAnalysisEngine:
                 ],
                 'process_tree': process_tree,
                 'network_connections': {'connection_change': connection_change},
+                'network_analysis': {
+                    'total_connections': len(monitored_connections),
+                    'unique_destinations': len(set(conn.get('remote_addr', '') for conn in monitored_connections if conn.get('remote_addr'))),
+                    'connection_change': connection_change,
+                    'monitored_connections': monitored_connections,
+                    'network_requests': self._analyze_network_requests(monitored_connections, 
+                                                                      stdout.decode('utf-8', errors='replace'),
+                                                                      stderr.decode('utf-8', errors='replace')),
+                    'protocols_used': list(set(conn.get('type', 'unknown') for conn in monitored_connections)),
+                    'remote_hosts': list(set(conn.get('remote_host', conn.get('remote_addr', '')) for conn in monitored_connections if conn.get('remote_addr')))
+                },
                 'memory_usage': {'initial_memory': start_memory},
                 'total_syscalls': len(syscalls),
                 'total_processes': 1 + len(new_processes)
@@ -311,6 +363,76 @@ class SimpleAnalysisEngine:
                                            key=lambda x: x[1], reverse=True)[:10])
         }
     
+    def _resolve_hostname(self, ip):
+        """Attempt to resolve IP to hostname"""
+        try:
+            import socket
+            hostname = socket.gethostbyaddr(ip)[0]
+            return hostname
+        except:
+            return ip
+    
+    def _analyze_network_requests(self, connections, stdout, stderr):
+        """Analyze network requests from connections and output"""
+        requests = []
+        
+        # Analyze actual connections
+        for conn in connections:
+            if conn.get('remote_addr'):
+                request_info = {
+                    'type': 'connection',
+                    'timestamp': conn.get('timestamp'),
+                    'protocol': f"{conn.get('family', 'unknown')}/{conn.get('type', 'unknown')}",
+                    'destination': conn.get('remote_addr'),
+                    'hostname': conn.get('remote_host', conn.get('remote_addr')),
+                    'status': conn.get('status', 'unknown'),
+                    'description': f"Connection to {conn.get('remote_host', conn.get('remote_addr'))} via {conn.get('type', 'unknown')}"
+                }
+                requests.append(request_info)
+        
+        # Analyze output for HTTP requests and other network activity
+        output_text = (stdout + stderr).lower()
+        lines = (stdout + stderr).split('\n')
+        
+        for line in lines:
+            line_lower = line.lower()
+            
+            # Look for HTTP requests
+            if any(keyword in line_lower for keyword in ['http://', 'https://', 'get ', 'post ', 'connecting to']):
+                # Extract URLs or hostnames
+                import re
+                url_pattern = r'https?://([\\w\\.-]+)(?:[:/][^\\s]*)?'
+                urls = re.findall(url_pattern, line, re.IGNORECASE)
+                
+                for url in urls:
+                    requests.append({
+                        'type': 'http_request',
+                        'timestamp': time.time(),
+                        'protocol': 'HTTP/HTTPS',
+                        'destination': url,
+                        'hostname': url,
+                        'status': 'detected_in_output',
+                        'description': f"HTTP request to {url} detected in output"
+                    })
+            
+            # Look for DNS queries
+            if any(keyword in line_lower for keyword in ['resolving', 'dns', 'nslookup', 'dig']):
+                hostname_pattern = r'(?:resolving|dns|nslookup|dig)\\s+([\\w\\.-]+)'
+                hostnames = re.findall(hostname_pattern, line, re.IGNORECASE)
+                
+                for hostname in hostnames:
+                    requests.append({
+                        'type': 'dns_query',
+                        'timestamp': time.time(),
+                        'protocol': 'DNS',
+                        'destination': hostname,
+                        'hostname': hostname,
+                        'status': 'detected_in_output',
+                        'description': f"DNS query for {hostname}"
+                    })
+        
+        return requests
+    
     def _perform_ai_analysis(self, analysis_results, api_key):
         """Perform AI analysis using Gemini API with optimized timeout and retry logic"""
         try:
@@ -324,7 +446,13 @@ class SimpleAnalysisEngine:
                 file_content = "File content unavailable"
 
             # Create optimized prompt for faster response
-            prompt = f"""Analyze this malware sample concisely:
+
+            prompt = f"""
+            use proper markdown formatting
+            answer format: 
+            if this a virus?
+            if yes, how does it technically work? do any maths if required use proper syntax
+            
 
 **File:** {os.path.basename(analysis_results.get('file_path', 'Unknown'))}
 **Platform:** {analysis_results.get('platform', 'Unknown')}
@@ -343,7 +471,6 @@ class SimpleAnalysisEngine:
 ```
 {analysis_results.get('monitor_output', {}).get('stdout', '')[:300]}
 ```
-
 Provide markdown analysis:
 
 ## Threat Assessment
@@ -354,10 +481,6 @@ Provide markdown analysis:
 - Primary malicious behaviors
 - Attack methodology 
 - Potential impact
-
-## Recommendations
-- Immediate actions
-- IOCs to monitor
 
 Keep under 400 words."""
 

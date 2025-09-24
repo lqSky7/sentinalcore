@@ -368,6 +368,39 @@
                 </div>
             </div>
 
+            <!-- Network Analysis -->
+            <div class="results-section">
+                <h3>NETWORK ANALYSIS</h3>
+                <div class="results-grid">
+                    <div class="metric">
+                        <div class="metric-value" id="totalConnections">0</div>
+                        <div class="metric-label">Total Connections</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="uniqueDestinations">0</div>
+                        <div class="metric-label">Unique Destinations</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="networkProtocols">0</div>
+                        <div class="metric-label">Protocols Used</div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <h4 style="margin-bottom: 10px; color: #333333; border-bottom: 1px solid #333333; padding-bottom: 5px;">Network Requests & Communications</h4>
+                    <div class="log-output" id="networkRequestsDetails">
+                        No network activity detected
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <h4 style="margin-bottom: 10px; color: #333333; border-bottom: 1px solid #333333; padding-bottom: 5px;">Connection Details</h4>
+                    <div class="log-output" id="networkConnectionsDetails">
+                        No connections monitored
+                    </div>
+                </div>
+            </div>
+
             <!-- Monitor Output -->
             <div class="results-section">
                 <h3>EXECUTION OUTPUT</h3>
@@ -503,6 +536,9 @@
             // Display system calls
             displaySyscalls(data.syscalls || []);
 
+            // Display network analysis
+            displayNetworkAnalysis(data.network_analysis);
+
             // Display execution output
             displayExecutionOutput(data.monitor_output);
 
@@ -597,6 +633,65 @@
             }
 
             outputEl.textContent = displayText || 'No output captured';
+        }
+
+        function displayNetworkAnalysis(networkData) {
+            // Update network metrics
+            document.getElementById('totalConnections').textContent = networkData?.total_connections || 0;
+            document.getElementById('uniqueDestinations').textContent = networkData?.unique_destinations || 0;
+            document.getElementById('networkProtocols').textContent = networkData?.protocols_used?.length || 0;
+
+            // Display network requests details
+            const requestsEl = document.getElementById('networkRequestsDetails');
+            const connectionsEl = document.getElementById('networkConnectionsDetails');
+            
+            if (!networkData || (!networkData.network_requests && !networkData.monitored_connections)) {
+                requestsEl.textContent = 'No network activity detected';
+                connectionsEl.textContent = 'No connections monitored';
+                return;
+            }
+
+            // Display network requests
+            let requestsText = '';
+            if (networkData.network_requests && networkData.network_requests.length > 0) {
+                requestsText += '=== NETWORK REQUESTS DETECTED ===\n\n';
+                networkData.network_requests.forEach((request, index) => {
+                    const timestamp = new Date(request.timestamp * 1000).toLocaleTimeString();
+                    requestsText += `[${timestamp}] ${request.type.toUpperCase()}\n`;
+                    requestsText += `  Protocol: ${request.protocol}\n`;
+                    requestsText += `  Destination: ${request.destination}\n`;
+                    requestsText += `  Hostname: ${request.hostname}\n`;
+                    requestsText += `  Status: ${request.status}\n`;
+                    requestsText += `  Description: ${request.description}\n\n`;
+                });
+            } else {
+                requestsText = 'No specific network requests detected in output or monitoring.';
+            }
+            requestsEl.textContent = requestsText;
+
+            // Display connection details
+            let connectionsText = '';
+            if (networkData.monitored_connections && networkData.monitored_connections.length > 0) {
+                connectionsText += '=== MONITORED CONNECTIONS ===\n\n';
+                connectionsText += `Total Connections: ${networkData.total_connections}\n`;
+                connectionsText += `Unique Destinations: ${networkData.unique_destinations}\n`;
+                connectionsText += `Protocols Used: ${networkData.protocols_used?.join(', ') || 'None'}\n`;
+                connectionsText += `Remote Hosts: ${networkData.remote_hosts?.join(', ') || 'None'}\n\n`;
+                
+                connectionsText += '=== CONNECTION DETAILS ===\n\n';
+                networkData.monitored_connections.forEach((conn, index) => {
+                    const timestamp = new Date(conn.timestamp * 1000).toLocaleTimeString();
+                    connectionsText += `[${timestamp}] Connection ${index + 1}\n`;
+                    connectionsText += `  Protocol: ${conn.family}/${conn.type}\n`;
+                    connectionsText += `  Local: ${conn.local_addr || 'N/A'}\n`;
+                    connectionsText += `  Remote: ${conn.remote_addr || 'N/A'}\n`;
+                    connectionsText += `  Hostname: ${conn.remote_host || 'Unresolved'}\n`;
+                    connectionsText += `  Status: ${conn.status}\n\n`;
+                });
+            } else {
+                connectionsText = 'No network connections were monitored during execution.';
+            }
+            connectionsEl.textContent = connectionsText;
         }
 
         // Allow Enter key to start analysis
