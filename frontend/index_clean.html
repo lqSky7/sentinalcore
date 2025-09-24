@@ -658,6 +658,7 @@
                 networkData.network_requests.forEach((request, index) => {
                     const timestamp = new Date(request.timestamp * 1000).toLocaleTimeString();
                     requestsText += `[${timestamp}] ${request.type.toUpperCase()}\n`;
+                    if (request.pid) requestsText += `  Process PID: ${request.pid}\n`;
                     requestsText += `  Protocol: ${request.protocol}\n`;
                     requestsText += `  Destination: ${request.destination}\n`;
                     requestsText += `  Hostname: ${request.hostname}\n`;
@@ -682,6 +683,7 @@
                 networkData.monitored_connections.forEach((conn, index) => {
                     const timestamp = new Date(conn.timestamp * 1000).toLocaleTimeString();
                     connectionsText += `[${timestamp}] Connection ${index + 1}\n`;
+                    if (conn.pid) connectionsText += `  Process PID: ${conn.pid}\n`;
                     connectionsText += `  Protocol: ${conn.family}/${conn.type}\n`;
                     connectionsText += `  Local: ${conn.local_addr || 'N/A'}\n`;
                     connectionsText += `  Remote: ${conn.remote_addr || 'N/A'}\n`;

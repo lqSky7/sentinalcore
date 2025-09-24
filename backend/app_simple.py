@@ -63,37 +63,58 @@ class SimpleAnalysisEngine:
                 proc_info = psutil.Process(process.pid)
                 start_memory = proc_info.memory_info().rss
                 
-                # Start network monitoring thread
+                # Start network monitoring thread - only for target process
                 monitoring_active = True
+                target_pids = {process.pid}  # Track target process and its children
+                
                 def monitor_network():
                     seen_connections = set()
                     while monitoring_active:
                         try:
-                            current_connections = psutil.net_connections()
-                            for conn in current_connections:
-                                # Create connection signature
-                                conn_sig = (
-                                    conn.family.name if hasattr(conn.family, 'name') else str(conn.family),
-                                    conn.type.name if hasattr(conn.type, 'name') else str(conn.type),
-                                    f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
-                                    f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
-                                    conn.status
-                                )
-                                
-                                if conn_sig not in seen_connections and conn.raddr:
-                                    seen_connections.add(conn_sig)
-                                    monitored_connections.append({
-                                        'timestamp': time.time(),
-                                        'family': conn_sig[0],
-                                        'type': conn_sig[1], 
-                                        'local_addr': conn_sig[2],
-                                        'remote_addr': conn_sig[3],
-                                        'status': conn_sig[4],
-                                        'remote_host': self._resolve_hostname(conn.raddr.ip) if conn.raddr else None
-                                    })
+                            # Update target PIDs to include any new child processes
+                            try:
+                                current_processes = psutil.process_iter(['pid', 'ppid'])
+                                for proc in current_processes:
+                                    if proc.info['ppid'] in target_pids:
+                                        target_pids.add(proc.info['pid'])
+                            except:
+                                pass
+                            
+                            # Only get connections for our target processes
+                            for pid in list(target_pids):
+                                try:
+                                    proc = psutil.Process(pid)
+                                    connections = proc.connections()
+                                    for conn in connections:
+                                        # Only track connections with remote addresses (outbound connections)
+                                        if conn.raddr:
+                                            conn_sig = (
+                                                conn.family.name if hasattr(conn.family, 'name') else str(conn.family),
+                                                conn.type.name if hasattr(conn.type, 'name') else str(conn.type),
+                                                f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
+                                                f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
+                                                conn.status,
+                                                pid  # Include PID in signature to make it unique per process
+                                            )
+                                            
+                                            if conn_sig not in seen_connections:
+                                                seen_connections.add(conn_sig)
+                                                monitored_connections.append({
+                                                    'timestamp': time.time(),
+                                                    'pid': pid,
+                                                    'family': conn_sig[0],
+                                                    'type': conn_sig[1], 
+                                                    'local_addr': conn_sig[2],
+                                                    'remote_addr': conn_sig[3],
+                                                    'status': conn_sig[4],
+                                                    'remote_host': self._resolve_hostname(conn.raddr.ip) if conn.raddr else None
+                                                })
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    # Process may have terminated
+                                    continue
                         except:
                             pass
-                        time.sleep(0.1)
+                        time.sleep(0.2)  # Slightly longer interval since we're doing more work
                 
                 network_thread = threading.Thread(target=monitor_network, daemon=True)
                 network_thread.start()
@@ -382,11 +403,12 @@ class SimpleAnalysisEngine:
                 request_info = {
                     'type': 'connection',
                     'timestamp': conn.get('timestamp'),
+                    'pid': conn.get('pid', 'unknown'),
                     'protocol': f"{conn.get('family', 'unknown')}/{conn.get('type', 'unknown')}",
                     'destination': conn.get('remote_addr'),
                     'hostname': conn.get('remote_host', conn.get('remote_addr')),
                     'status': conn.get('status', 'unknown'),
-                    'description': f"Connection to {conn.get('remote_host', conn.get('remote_addr'))} via {conn.get('type', 'unknown')}"
+                    'description': f"Process {conn.get('pid', 'unknown')} connected to {conn.get('remote_host', conn.get('remote_addr'))} via {conn.get('type', 'unknown')}"
                 }
                 requests.append(request_info)
         
