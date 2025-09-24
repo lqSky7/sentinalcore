@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sentinal - Malware Analysis</title>
+    
+    <!-- Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    
+    <!-- Markdown renderer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.2/marked.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -47,6 +53,61 @@
         .warning {
             color: #cc0000;
             font-weight: bold;
+        }
+
+        .material-icons {
+            vertical-align: middle;
+            margin-right: 8px;
+            font-size: 18px;
+        }
+
+        .ai-analysis-content {
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .ai-analysis-content h1,
+        .ai-analysis-content h2,
+        .ai-analysis-content h3 {
+            margin: 15px 0 10px 0;
+            color: #333333;
+        }
+
+        .ai-analysis-content ul,
+        .ai-analysis-content ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        .ai-analysis-content li {
+            margin: 5px 0;
+        }
+
+        .ai-analysis-content code {
+            background-color: #f0f0f0;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: inherit;
+        }
+
+        .ai-analysis-content pre {
+            background-color: #f8f8f8;
+            border: 1px solid #cccccc;
+            padding: 10px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        .ai-analysis-content blockquote {
+            border-left: 3px solid #cccccc;
+            margin: 10px 0;
+            padding-left: 15px;
+            color: #666666;
+        }
+
+        .ai-analysis-content strong {
+            font-weight: bold;
+            color: #333333;
         }
 
         .analysis-form {
@@ -290,7 +351,7 @@
         <div class="header">
             <h1>SENTINAL</h1>
             <p>Cross-Platform Malware Analysis Framework</p>
-            <p class="warning">⚠️ WARNING: Execute potentially malicious files only in isolated environments ⚠️</p>
+            <p class="warning"><span class="material-icons">warning</span>WARNING: Execute potentially malicious files only in isolated environments<span class="material-icons">warning</span></p>
         </div>
 
         <div class="platform-info" id="platformInfo">
@@ -317,7 +378,7 @@
         <div class="results" id="results">
             <!-- Suspicious patterns section -->
             <div class="suspicious-patterns" id="suspiciousPatterns" style="display: none;">
-                <h3>🚨 SUSPICIOUS PATTERNS DETECTED</h3>
+                <h3><span class="material-icons">report_problem</span>SUSPICIOUS PATTERNS DETECTED</h3>
                 <div id="patternList"></div>
             </div>
 
@@ -375,11 +436,28 @@
                     No output available
                 </div>
             </div>
+
+            <!-- AI Analysis Controls -->
+            <div class="results-section">
+                <h3><span class="material-icons">psychology</span>AI ANALYSIS</h3>
+                <p style="margin-bottom: 15px; color: #666666;">Get comprehensive threat assessment and malware classification using AI.</p>
+                <button class="btn" id="aiAnalyzeBtn" onclick="startAiAnalysis()" style="display: none;"><span class="material-icons">smart_toy</span>ANALYZE WITH GEMINI AI</button>
+            </div>
+
+            <!-- AI Analysis Results -->
+            <div class="results-section" id="aiAnalysisSection" style="display: none;">
+                <h3><span class="material-icons">security</span>AI THREAT ASSESSMENT</h3>
+                <div class="log-output" id="aiAnalysisContent">
+                    AI analysis will appear here...
+                </div>
+                <button class="btn" id="rerunAiBtn" onclick="rerunAiAnalysis()" style="display: none; margin-top: 10px;"><span class="material-icons">refresh</span>RE-RUN AI ANALYSIS</button>
+            </div>
         </div>
     </div>
 
     <script>
         let analysisInProgress = false;
+        let currentAnalysisData = null;
 
         // Load platform information on page load
         window.addEventListener('load', function() {
@@ -456,6 +534,7 @@
                     throw new Error(result.error || 'Analysis failed');
                 }
 
+                currentAnalysisData = result;
                 showStatus('Analysis completed successfully!', 'success');
                 displayResults(result);
                 loadPlatformInfo(); // Refresh platform info
@@ -489,7 +568,7 @@
                 const patternListEl = document.getElementById('patternList');
                 
                 patternListEl.innerHTML = suspiciousPatterns
-                    .map(pattern => `<div class="pattern-item">⚠️ ${pattern}</div>`)
+                    .map(pattern => `<div class="pattern-item"><span class="material-icons">warning</span>${pattern}</div>`)
                     .join('');
                 
                 patternsEl.style.display = 'block';
@@ -505,6 +584,15 @@
 
             // Display execution output
             displayExecutionOutput(data.monitor_output);
+
+            // Show AI analysis button after analysis completion
+            const aiBtn = document.getElementById('aiAnalyzeBtn');
+            if (aiBtn) {
+                aiBtn.style.display = 'inline-block';
+            }
+
+            // Display AI analysis if available
+            displayAiAnalysis(data.ai_analysis);
 
             // Scroll to results
             document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
@@ -597,6 +685,83 @@
             }
 
             outputEl.textContent = displayText || 'No output captured';
+        }
+
+        async function startAiAnalysis() {
+            if (!currentAnalysisData) {
+                showStatus('Please run analysis first', 'error');
+                return;
+            }
+
+            const aiBtn = document.getElementById('aiAnalyzeBtn');
+            aiBtn.disabled = true;
+            aiBtn.innerHTML = '<span class="material-icons">hourglass_empty</span>ANALYZING WITH AI...';
+            
+            showStatus('Running AI analysis...', 'analyzing');
+
+            try {
+                const response = await fetch('/api/ai-analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        analysis_data: currentAnalysisData
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'AI analysis failed');
+                }
+
+                currentAnalysisData.ai_analysis = result.ai_analysis;
+                displayAiAnalysis(result.ai_analysis);
+                showStatus('AI analysis completed!', 'success');
+
+            } catch (error) {
+                showStatus(`AI Error: ${error.message}`, 'error');
+                console.error('AI analysis error:', error);
+            } finally {
+                aiBtn.disabled = false;
+                aiBtn.innerHTML = '<span class="material-icons">smart_toy</span>ANALYZE WITH GEMINI AI';
+            }
+        }
+
+        function rerunAiAnalysis() {
+            startAiAnalysis();
+        }
+
+        function displayAiAnalysis(aiAnalysis) {
+            const aiSection = document.getElementById('aiAnalysisSection');
+            const aiContent = document.getElementById('aiAnalysisContent');
+            const rerunBtn = document.getElementById('rerunAiBtn');
+            
+            if (!aiAnalysis) {
+                aiSection.style.display = 'none';
+                return;
+            }
+
+            aiSection.style.display = 'block';
+            rerunBtn.style.display = 'inline-block';
+            
+            if (aiAnalysis.error) {
+                aiContent.innerHTML = `<div style="color: #cc0000;"><span class="material-icons">error</span>AI Analysis Error: ${aiAnalysis.error}</div>`;
+            } else if (aiAnalysis.analysis) {
+                // Render markdown content
+                try {
+                    const renderedMarkdown = marked.parse(aiAnalysis.analysis);
+                    aiContent.innerHTML = renderedMarkdown;
+                    aiContent.className = 'log-output ai-analysis-content';
+                } catch (error) {
+                    // Fallback to plain text if markdown parsing fails
+                    aiContent.textContent = aiAnalysis.analysis;
+                    aiContent.className = 'log-output';
+                }
+            } else {
+                aiContent.innerHTML = '<div style="color: #666666;"><span class="material-icons">info</span>AI analysis completed but no insights generated.</div>';
+            }
         }
 
         // Allow Enter key to start analysis

@@ -5,3 +5,4 @@ matplotlib
 networkx
 numpy
 requests
+python-dotenv

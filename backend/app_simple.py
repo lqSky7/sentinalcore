@@ -9,6 +9,11 @@ import platform
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+import requests
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -305,6 +310,137 @@ class SimpleAnalysisEngine:
             'syscall_frequency': dict(sorted(syscall_counts.items(), 
                                            key=lambda x: x[1], reverse=True)[:10])
         }
+    
+    def _perform_ai_analysis(self, analysis_results, api_key):
+        """Perform AI analysis using Gemini API with optimized timeout and retry logic"""
+        try:
+            # Get concise file content
+            file_content = ""
+            try:
+                if os.path.exists(analysis_results.get('file_path', '')):
+                    with open(analysis_results.get('file_path', ''), 'r', errors='ignore') as f:
+                        file_content = f.read()[:800]  # Reduced to 800 chars
+            except:
+                file_content = "File content unavailable"
+
+            # Create optimized prompt for faster response
+            prompt = f"""Analyze this malware sample concisely:
+
+**File:** {os.path.basename(analysis_results.get('file_path', 'Unknown'))}
+**Platform:** {analysis_results.get('platform', 'Unknown')}
+
+**System Activity:**
+- Syscalls: {analysis_results.get('total_syscalls', 0)} total ({analysis_results.get('syscall_analysis', {}).get('unique_syscalls', 0)} unique)
+- Operations: File={analysis_results.get('syscall_analysis', {}).get('file_operations', 0)}, Network={analysis_results.get('syscall_analysis', {}).get('network_operations', 0)}, Process={analysis_results.get('syscall_analysis', {}).get('process_operations', 0)}
+- Suspicious: {', '.join(analysis_results.get('syscall_analysis', {}).get('suspicious_patterns', [])) or 'None'}
+
+**Code Sample:**
+```
+{file_content}
+```
+
+**Output:**
+```
+{analysis_results.get('monitor_output', {}).get('stdout', '')[:300]}
+```
+
+Provide markdown analysis:
+
+## Threat Assessment
+- **Risk Level:** High/Medium/Low
+- **Malware Type:** Classification (ransomware/backdoor/miner/etc)
+
+## Key Findings
+- Primary malicious behaviors
+- Attack methodology 
+- Potential impact
+
+## Recommendations
+- Immediate actions
+- IOCs to monitor
+
+Keep under 400 words."""
+
+            # Implement retry with shorter timeouts
+            max_retries = 2
+            timeouts = [10, 20]  # Shorter timeouts
+            
+            for attempt in range(max_retries):
+                try:
+                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+                    
+                    payload = {
+                        "contents": [{
+                            "parts": [{
+                                "text": prompt
+                            }]
+                        }],
+                        "generationConfig": {
+                            "maxOutputTokens": 800,  # Limit output for faster response
+                            "temperature": 0.1,
+                            "topP": 0.8
+                        }
+                    }
+                    
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Sentinal-Malware-Analyzer/1.0'
+                    }
+                    
+                    timeout = timeouts[attempt] if attempt < len(timeouts) else 20
+                    
+                    response = requests.post(
+                        gemini_url, 
+                        json=payload, 
+                        headers=headers, 
+                        timeout=timeout,
+                        verify=True  # Ensure SSL verification
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if 'candidates' in result and len(result['candidates']) > 0:
+                            content = result['candidates'][0].get('content', {})
+                            if 'parts' in content and len(content['parts']) > 0:
+                                ai_analysis = content['parts'][0]['text']
+                                return {
+                                    'analysis': ai_analysis,
+                                    'model': 'gemini-1.5-flash',
+                                    'timestamp': datetime.now().isoformat(),
+                                    'attempt': attempt + 1,
+                                    'timeout_used': timeout
+                                }
+                        return {'error': 'No content in AI response'}
+                    elif response.status_code == 429:
+                        if attempt < max_retries - 1:
+                            time.sleep(2 ** attempt)  # Exponential backoff for rate limits
+                            continue
+                        return {'error': 'API rate limit exceeded'}
+                    elif response.status_code >= 500:
+                        if attempt < max_retries - 1:
+                            continue  # Retry on server errors
+                        return {'error': f'Server error {response.status_code}'}
+                    else:
+                        return {'error': f'API Error {response.status_code}: {response.text[:100]}'}
+                        
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        continue
+                    return {'error': f'Request timed out after {max_retries} attempts (max {timeout}s)'}
+                    
+                except requests.exceptions.ConnectionError:
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    return {'error': 'Network connection failed - check internet connectivity'}
+                    
+                except requests.exceptions.SSLError:
+                    return {'error': 'SSL certificate verification failed'}
+                    
+            return {'error': 'All retry attempts failed'}
+                
+        except Exception as e:
+            return {'error': f'AI analysis failed: {str(e)}'}
 
 # Global analysis engine
 analysis_engine = SimpleAnalysisEngine()
@@ -336,6 +472,24 @@ def analyze_file():
         return jsonify(result), 500
     
     return jsonify(result)
+
+@app.route('/api/ai-analyze', methods=['POST'])
+def ai_analyze():
+    data = request.get_json()
+    
+    if not data or 'analysis_data' not in data:
+        return jsonify({'error': 'analysis_data is required'}), 400
+    
+    analysis_data = data['analysis_data']
+    gemini_api_key = os.getenv('GEMINI_API_KEY')
+    
+    if not gemini_api_key:
+        return jsonify({'error': 'GEMINI_API_KEY not configured in environment'}), 500
+    
+    # Perform AI analysis
+    ai_analysis = analysis_engine._perform_ai_analysis(analysis_data, gemini_api_key)
+    
+    return jsonify({'ai_analysis': ai_analysis})
 
 @app.route('/api/results/<analysis_id>')
 def get_results(analysis_id):

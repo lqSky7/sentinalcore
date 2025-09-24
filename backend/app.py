@@ -11,6 +11,11 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import csv
 import re
+import requests
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 try:
     from platform_detection import get_platform_info, is_platform_supported
@@ -228,7 +233,7 @@ class AnalysisEngine:
         
         return {'tree': tree, 'roots': root_processes}
     
-    def run_analysis(self, file_path, timeout=30):
+    def run_analysis(self, file_path, timeout=30, enable_ai_analysis=False, gemini_api_key=None):
         """Main analysis function - simplified for cross-platform compatibility"""
         analysis_id = f"analysis_{int(time.time())}"
         
@@ -241,7 +246,14 @@ class AnalysisEngine:
             os.chmod(file_path, 0o755)
             
             # Use simplified monitoring approach
-            return self._simple_process_analysis(file_path, timeout, analysis_id)
+            results = self._simple_process_analysis(file_path, timeout, analysis_id)
+            
+            # Add AI analysis if requested
+            if enable_ai_analysis and gemini_api_key:
+                ai_analysis = self._perform_ai_analysis(results, gemini_api_key)
+                results['ai_analysis'] = ai_analysis
+            
+            return results
             
             # Run the C monitor
             start_time = datetime.now()
@@ -324,7 +336,19 @@ class AnalysisEngine:
         
         # Get initial system state
         initial_processes = set(p.pid for p in psutil.process_iter())
-        initial_connections = len(psutil.net_connections())
+        initial_connections = psutil.net_connections()
+        initial_conn_count = len(initial_connections)
+        initial_conn_details = [
+            {
+                'fd': conn.fd,
+                'family': str(conn.family),
+                'type': str(conn.type),
+                'laddr': f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
+                'raddr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
+                'status': conn.status
+            }
+            for conn in initial_connections
+        ]
         
         try:
             # Start the process and monitor it
@@ -339,6 +363,7 @@ class AnalysisEngine:
             child_processes = []
             syscall_simulation = []
             network_activity = []
+            monitored_connections = []
             
             # Get process info
             try:
@@ -346,6 +371,41 @@ class AnalysisEngine:
                 start_memory = proc_info.memory_info().rss
             except:
                 start_memory = 0
+            
+            # Start network monitoring thread
+            monitoring_active = True
+            def monitor_network():
+                while monitoring_active:
+                    try:
+                        # Get all current connections
+                        current_connections = psutil.net_connections()
+                        for conn in current_connections:
+                            # Check if this connection is new
+                            conn_key = (
+                                conn.family.name if hasattr(conn.family, 'name') else str(conn.family),
+                                conn.type.name if hasattr(conn.type, 'name') else str(conn.type),
+                                f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
+                                f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
+                                conn.status
+                            )
+                            
+                            # Add to monitored connections if not already present
+                            if conn_key not in [c['key'] for c in monitored_connections]:
+                                monitored_connections.append({
+                                    'key': conn_key,
+                                    'timestamp': time.time(),
+                                    'family': conn_key[0],
+                                    'type': conn_key[1],
+                                    'laddr': conn_key[2],
+                                    'raddr': conn_key[3],
+                                    'status': conn_key[4]
+                                })
+                    except:
+                        pass
+                    time.sleep(0.1)  # Monitor every 100ms
+            
+            network_thread = threading.Thread(target=monitor_network, daemon=True)
+            network_thread.start()
             
             # Wait for process with timeout
             try:
@@ -356,12 +416,27 @@ class AnalysisEngine:
                 else:
                     process.kill()
                 stdout, stderr = process.communicate()
+            finally:
+                # Stop network monitoring
+                monitoring_active = False
             
             end_time = datetime.now()
             
             # Get final system state
             final_processes = set(p.pid for p in psutil.process_iter())
-            final_connections = len(psutil.net_connections())
+            final_connections = psutil.net_connections()
+            final_conn_count = len(final_connections)
+            final_conn_details = [
+                {
+                    'fd': conn.fd,
+                    'family': str(conn.family),
+                    'type': str(conn.type),
+                    'laddr': f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
+                    'raddr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
+                    'status': conn.status
+                }
+                for conn in final_connections
+            ]
             
             # Detect new processes (approximate child processes)
             new_processes = final_processes - initial_processes
@@ -369,8 +444,34 @@ class AnalysisEngine:
             # Simulate system call analysis based on file type and output
             syscalls = self._simulate_syscalls_from_execution(file_path, stdout, stderr, process.returncode)
             
-            # Get network activity change
-            network_change = final_connections - initial_connections
+            # Get network activity change and details
+            network_change = final_conn_count - initial_conn_count
+            
+            # Filter out connections that were present initially
+            new_connections = []
+            initial_keys = set(
+                (
+                    conn['family'], conn['type'], 
+                    conn['laddr'], conn['raddr'], 
+                    conn['status']
+                ) for conn in initial_conn_details
+            )
+            
+            for conn in monitored_connections:
+                conn_tuple = (conn['family'], conn['type'], conn['laddr'], conn['raddr'], conn['status'])
+                if conn_tuple not in initial_keys:
+                    new_connections.append(conn)
+            
+            network_details = {
+                'initial_count': initial_conn_count,
+                'final_count': final_conn_count,
+                'change': network_change,
+                'initial_connections': initial_conn_details,
+                'final_connections': final_conn_details,
+                'monitored_connections': monitored_connections,
+                'new_connections': new_connections,
+                'total_monitored': len(monitored_connections)
+            }
             
             # Build results
             results = {
@@ -405,7 +506,7 @@ class AnalysisEngine:
                     }},
                     'roots': [process.pid]
                 },
-                'network_connections': {'change': network_change},
+                'network_connections': network_details,
                 'memory_usage': {'start': start_memory, 'process_pid': process.pid},
                 'total_syscalls': len(syscalls),
                 'total_processes': 1 + len(new_processes),
@@ -699,6 +800,171 @@ class AnalysisEngine:
             'syscall_frequency': dict(sorted(syscall_counts.items(), 
                                            key=lambda x: x[1], reverse=True)[:10])
         }
+    
+    def _perform_ai_analysis(self, analysis_results, api_key):
+        """Perform AI analysis using Gemini API"""
+        try:
+            # Prepare analysis summary for AI
+            analysis_summary = self._prepare_analysis_summary(analysis_results)
+            
+            # Call Gemini API
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+            
+            # Get file content for analysis if possible
+            file_content = ""
+            try:
+                if os.path.exists(analysis_results.get('file_path', '')):
+                    with open(analysis_results.get('file_path', ''), 'r', errors='ignore') as f:
+                        file_content = f.read()[:2000]  # First 2KB of file
+            except:
+                file_content = "File content unavailable"
+
+            # Format process tree for analysis
+            process_tree_summary = ""
+            if analysis_results.get('process_tree', {}).get('tree'):
+                tree = analysis_results['process_tree']['tree']
+                roots = analysis_results['process_tree'].get('roots', [])
+                
+                def format_process_tree(pid, level=0):
+                    if pid not in tree:
+                        return ""
+                    proc = tree[pid]
+                    indent = "  " * level
+                    result = f"{indent}- PID:{pid} ({proc.get('executable', 'unknown')}) [{proc.get('status', 'unknown')}]\n"
+                    for child_pid in proc.get('children', []):
+                        result += format_process_tree(child_pid, level + 1)
+                    return result
+                
+                for root_pid in roots:
+                    process_tree_summary += format_process_tree(root_pid)
+
+            # Format network connections
+            network_summary = ""
+            if analysis_results.get('network_connections', {}).get('new_connections'):
+                network_summary = "New Network Connections Detected:\n"
+                for conn in analysis_results['network_connections']['new_connections'][:10]:
+                    network_summary += f"- {conn.get('family', 'unknown')}/{conn.get('type', 'unknown')} "
+                    network_summary += f"{conn.get('laddr', 'N/A')} -> {conn.get('raddr', 'N/A')} "
+                    network_summary += f"[{conn.get('status', 'unknown')}]\n"
+
+            prompt = f"""
+As a cybersecurity expert, analyze this comprehensive malware analysis report:
+
+=== FILE INFORMATION ===
+File Path: {analysis_results.get('file_path', 'Unknown')}
+Platform: {analysis_results.get('platform', 'Unknown')}
+Analysis Duration: {analysis_results.get('duration', 0)} seconds
+Analysis Method: {analysis_results.get('monitoring_method', 'Unknown')}
+
+=== FILE CONTENT SAMPLE ===
+{file_content}
+
+=== ANALYSIS OVERVIEW ===
+Total System Calls: {analysis_results.get('total_syscalls', 0)}
+Unique System Calls: {analysis_results.get('syscall_analysis', {}).get('unique_syscalls', 0)}
+Total Processes: {analysis_results.get('total_processes', 0)}
+
+System Call Breakdown:
+- File Operations: {analysis_results.get('syscall_analysis', {}).get('file_operations', 0)}
+- Network Operations: {analysis_results.get('syscall_analysis', {}).get('network_operations', 0)}
+- Process Operations: {analysis_results.get('syscall_analysis', {}).get('process_operations', 0)}
+- Memory Operations: {analysis_results.get('syscall_analysis', {}).get('memory_operations', 0)}
+
+Top System Calls: {analysis_results.get('syscall_analysis', {}).get('syscall_frequency', {})}
+
+=== PROCESS TREE ===
+{process_tree_summary or 'No process tree data available'}
+
+=== NETWORK ACTIVITY ===
+Initial Connections: {analysis_results.get('network_connections', {}).get('initial_count', 0)}
+Final Connections: {analysis_results.get('network_connections', {}).get('final_count', 0)}
+New Connections: {len(analysis_results.get('network_connections', {}).get('new_connections', []))}
+Total Monitored: {analysis_results.get('network_connections', {}).get('total_monitored', 0)}
+
+{network_summary}
+
+=== SUSPICIOUS PATTERNS DETECTED ===
+{analysis_results.get('syscall_analysis', {}).get('suspicious_patterns', []) or 'None detected'}
+
+=== EXECUTION OUTPUT ===
+STDOUT:
+{analysis_results.get('monitor_output', {}).get('stdout', 'No stdout')[:1000]}
+
+STDERR:
+{analysis_results.get('monitor_output', {}).get('stderr', 'No stderr')[:1000]}
+
+Return Code: {analysis_results.get('monitor_output', {}).get('return_code', 'Unknown')}
+
+=== ANALYSIS REQUEST ===
+Based on this comprehensive analysis, provide:
+
+1. **THREAT LEVEL**: High/Medium/Low with justification
+2. **MALWARE CLASSIFICATION**: Type (ransomware, backdoor, miner, etc.)
+3. **KEY BEHAVIORS**: Most concerning malicious activities
+4. **ATTACK VECTOR**: How this malware operates
+5. **IMPACT ASSESSMENT**: Potential damage and system compromise
+6. **NETWORK INDICATORS**: Suspicious network activity analysis
+7. **PROCESS BEHAVIOR**: Analysis of process spawning and injection
+8. **FILE SYSTEM IMPACT**: File operations and persistence mechanisms
+9. **MITIGATION STEPS**: Immediate actions to take
+10. **IOCs**: Specific indicators of compromise
+
+Format your response clearly with headers and bullet points for easy reading.
+"""
+            
+            payload = {
+                "contents": [{
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }]
+            }
+            
+            headers = {
+                'Content-Type': 'application/json'
+            }
+            
+            response = requests.post(gemini_url, json=payload, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if 'candidates' in result and len(result['candidates']) > 0:
+                    ai_analysis = result['candidates'][0]['content']['parts'][0]['text']
+                    return {
+                        'analysis': ai_analysis,
+                        'model': 'gemini-pro',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                else:
+                    return {'error': 'No analysis generated by AI model'}
+            else:
+                error_msg = f"API Error {response.status_code}: {response.text}"
+                return {'error': error_msg}
+                
+        except requests.exceptions.RequestException as e:
+            return {'error': f'Network error calling Gemini API: {str(e)}'}
+        except Exception as e:
+            return {'error': f'AI analysis failed: {str(e)}'}
+    
+    def _prepare_analysis_summary(self, results):
+        """Prepare a concise summary of analysis results for AI processing"""
+        summary = {
+            'file_path': results.get('file_path'),
+            'platform': results.get('platform'),
+            'duration': results.get('duration'),
+            'syscalls': {
+                'total': results.get('total_syscalls', 0),
+                'analysis': results.get('syscall_analysis', {})
+            },
+            'network': {
+                'connections': len(results.get('network_connections', {}).get('new_connections', [])),
+                'total_monitored': results.get('network_connections', {}).get('total_monitored', 0)
+            },
+            'processes': results.get('total_processes', 0),
+            'suspicious_patterns': results.get('syscall_analysis', {}).get('suspicious_patterns', []),
+            'output': results.get('monitor_output', {})
+        }
+        return summary
 
 # Global analysis engine
 analysis_engine = AnalysisEngine()
@@ -720,19 +986,44 @@ def analyze_file():
     
     file_path = data['file_path']
     timeout = data.get('timeout', 30)
+    enable_ai_analysis = data.get('enable_ai_analysis', False)
+    
+    gemini_api_key = None
+    if enable_ai_analysis:
+        gemini_api_key = os.getenv('GEMINI_API_KEY')
+        if not gemini_api_key:
+            return jsonify({'error': 'GEMINI_API_KEY not configured in environment'}), 500
     
     # Run analysis in background
     analysis_engine.current_analysis = threading.Thread(
-        target=lambda: analysis_engine.run_analysis(file_path, timeout)
+        target=lambda: analysis_engine.run_analysis(file_path, timeout, enable_ai_analysis, gemini_api_key)
     )
     
     # For simplicity, run synchronously for now
-    result = analysis_engine.run_analysis(file_path, timeout)
+    result = analysis_engine.run_analysis(file_path, timeout, enable_ai_analysis, gemini_api_key)
     
     if 'error' in result:
         return jsonify(result), 500
     
     return jsonify(result)
+
+@app.route('/api/ai-analyze', methods=['POST'])
+def ai_analyze():
+    data = request.get_json()
+    
+    if not data or 'analysis_data' not in data:
+        return jsonify({'error': 'analysis_data is required'}), 400
+    
+    analysis_data = data['analysis_data']
+    gemini_api_key = os.getenv('GEMINI_API_KEY')
+    
+    if not gemini_api_key:
+        return jsonify({'error': 'GEMINI_API_KEY not configured in environment'}), 500
+    
+    # Perform AI analysis
+    ai_analysis = analysis_engine._perform_ai_analysis(analysis_data, gemini_api_key)
+    
+    return jsonify({'ai_analysis': ai_analysis})
 
 @app.route('/api/results/<analysis_id>')
 def get_results(analysis_id):
