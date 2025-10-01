@@ -1,0 +1,27 @@
+{
+  "use_namespaces": true,
+  "namespace_config": {
+    "use_pid_ns": true,
+    "use_mount_ns": true,
+    "use_net_ns": false,
+    "use_user_ns": true,
+    "use_ipc_ns": true,
+    "use_uts_ns": true,
+    "hostname": "analysis-sandbox"
+  },
+  "use_chroot": false,
+  "use_resource_limits": true,
+  "resource_limits": {
+    "cpu_quota": 50000,
+    "memory_limit": "256M",
+    "memory_swap_limit": "512M",
+    "pids_max": 32,
+    "execution_timeout": 60
+  },
+  "execution_timeout": 60,
+  "capture_strace": true,
+  "capture_network": false,
+  "monitor_file_access": true,
+  "monitor_network_activity": false,
+  "monitor_process_creation": true
+}

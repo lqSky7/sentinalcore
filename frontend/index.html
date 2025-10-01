@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinal - Malware Analysis</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+            background-color: #ffffff;
+            color: #333333;
+            line-height: 1.4;
+            font-size: 14px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border: 2px solid #333333;
+            padding: 20px;
+            background-color: #f8f8f8;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .header p {
+            color: #666666;
+            margin: 5px 0;
+        }
+
+        .warning {
+            color: #cc0000;
+            font-weight: bold;
+        }
+
+        .analysis-form {
+            background-color: #f8f8f8;
+            border: 2px solid #333333;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333333;
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            color: #333333;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        .form-group input[type="text"]:focus,
+        .form-group input[type="number"]:focus {
+            outline: none;
+            border-color: #666666;
+            background-color: #f0f0f0;
+        }
+
+        .btn {
+            background-color: #ffffff;
+            color: #333333;
+            border: 2px solid #333333;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #333333;
+            color: #ffffff;
+        }
+
+        .btn:disabled {
+            background-color: #cccccc;
+            color: #666666;
+            cursor: not-allowed;
+            border-color: #cccccc;
+        }
+
+        .status {
+            background-color: #f8f8f8;
+            border: 2px solid #333333;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .status.analyzing {
+            background-color: #fff3cd;
+            border-color: #ffeaa7;
+            color: #856404;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status.error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .status.success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.8; }
+            50% { opacity: 1; }
+            100% { opacity: 0.8; }
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results-section {
+            background-color: #f8f8f8;
+            border: 2px solid #333333;
+            margin-bottom: 20px;
+            padding: 20px;
+        }
+
+        .results-section h3 {
+            color: #333333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #333333;
+            padding-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .metric {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333333;
+            margin-bottom: 5px;
+        }
+
+        .metric-label {
+            color: #666666;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .process-tree {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            font-size: 12px;
+            overflow-x: auto;
+            min-height: 100px;
+        }
+
+        .process-node {
+            margin-left: 20px;
+            margin-bottom: 5px;
+            color: #333333;
+            padding: 2px 0;
+        }
+
+        .process-node.root {
+            margin-left: 0;
+            font-weight: bold;
+        }
+
+        .process-node.child {
+            color: #666666;
+        }
+
+        .syscall-list {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-size: 12px;
+            min-height: 100px;
+        }
+
+        .syscall-item {
+            margin-bottom: 3px;
+            padding: 3px 6px;
+            border-left: 3px solid #cccccc;
+            color: #333333;
+        }
+
+        .syscall-item.suspicious {
+            border-left-color: #cc0000;
+            background-color: #fff5f5;
+        }
+
+        .suspicious-patterns {
+            background-color: #fff5f5;
+            border: 2px solid #cc0000;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .suspicious-patterns h3 {
+            color: #cc0000;
+            border-bottom-color: #cc0000;
+        }
+
+        .pattern-item {
+            color: #cc0000;
+            margin: 8px 0;
+            font-weight: bold;
+        }
+
+        .log-output {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            padding: 15px;
+            white-space: pre-wrap;
+            font-size: 11px;
+            max-height: 250px;
+            overflow-y: auto;
+            color: #333333;
+            min-height: 100px;
+        }
+
+        .platform-info {
+            background-color: #e9ecef;
+            border: 2px solid #333333;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 12px;
+            color: #495057;
+        }
+
+        /* Isolation Controls Styles */
+        .isolation-status {
+            font-size: 12px;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        
+        .isolation-status.high {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .isolation-status.medium {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .isolation-status.low {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .security-score {
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 5px;
+        }
+        
+        .security-score.high { background-color: #28a745; color: white; }
+        .security-score.medium { background-color: #ffc107; color: black; }
+        .security-score.low { background-color: #dc3545; color: white; }
+        
+        .sudo-prompt {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        
+        input[type="checkbox"] {
+            margin-right: 8px;
+        }
+
+        @media (max-width: 768px) {
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SENTINAL CORE</h1>
+        </div>
+
+        <div class="platform-info" id="platformInfo">
+            Loading platform information...
+        </div>
+
+        <!-- Analysis Mode Selection -->
+        <div class="analysis-form">
+            <h3>Analysis Mode</h3>
+            <div class="form-group">
+                <label>
+                    <input type="radio" name="analysisMode" value="dynamic" checked onchange="toggleAnalysisMode()"> 
+                    Dynamic Analysis (Execute File)
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="radio" name="analysisMode" value="static" onchange="toggleAnalysisMode()"> 
+                    Static Analysis (No Execution)
+                </label>
+            </div>
+        </div>
+
+        <!-- Dynamic Analysis Form -->
+        <div class="analysis-form" id="dynamicForm">
+            <h3>Dynamic File Analysis</h3>
+            <div class="form-group">
+                <label for="filePath">File Path:</label>
+                <input type="text" id="filePath" placeholder="/path/to/suspicious/file" value="/path/to/sentinalcore/samples/test_malware.py">
+            </div>
+            <div class="form-group">
+                <label for="timeout">Timeout (seconds):</label>
+                <input type="number" id="timeout" value="30" min="5" max="300">
+            </div>
+            
+            <!-- Isolation Controls -->
+            <div class="form-group" style="border-top: 1px solid #333; padding-top: 15px; margin-top: 15px;">
+                <label style="color: #cc0000; font-weight: bold;">🔒 ISOLATION CONTROLS</label>
+                
+                <!-- Auto-Isolation Settings -->
+                <div style="margin: 10px 0; background: #f9f9f9; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                    <div style="margin-bottom: 10px;">
+                        <input type="checkbox" id="enableAutoIsolation" checked>
+                        <label for="enableAutoIsolation" style="display: inline; margin-left: 5px; font-weight: bold; color: #007700;">🤖 Automatic Risk-Based Isolation</label>
+                    </div>
+                    <div style="font-size: 12px; color: #666; margin-left: 20px;">
+                        Automatically selects isolation level based on file risk assessment
+                    </div>
+                    <div id="riskAssessment" style="display: none; margin: 10px 0; padding: 8px; background: #fff; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                        <div id="riskScore"></div>
+                        <div id="riskLevel"></div>
+                        <div id="recommendedIsolation"></div>
+                    </div>
+                </div>
+                
+                <!-- Manual Isolation Settings -->
+                <div style="margin: 10px 0;">
+                    <input type="checkbox" id="useManualIsolation">
+                    <label for="useManualIsolation" style="display: inline; margin-left: 5px;">Manual Isolation Override</label>
+                </div>
+                
+                <div id="manualIsolationControls" style="display: none; margin: 10px 0; padding: 10px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px;">
+                    <label for="isolationLevel" style="font-weight: bold;">Isolation Level:</label>
+                    <select id="isolationLevel" style="margin-left: 10px; padding: 2px;">
+                        <option value="basic">Basic (Monitor only)</option>
+                        <option value="medium">Medium (Standard namespaces)</option>
+                        <option value="high" selected>High (Full namespaces)</option>
+                        <option value="maximum">Maximum (Chroot + namespaces)</option>
+                    </select>
+                </div>
+                
+                <!-- Legacy sudo control -->
+                <div style="margin: 10px 0;">
+                    <input type="checkbox" id="useSudo">
+                    <label for="useSudo" style="display: inline; margin-left: 5px;">Enhanced Isolation (Requires sudo)</label>
+                </div>
+                
+                <div id="isolationStatus" style="margin: 10px 0; padding: 10px; background: #f0f0f0; border: 1px solid #333; font-size: 12px;">
+                    Loading isolation status...
+                </div>
+                
+                <div id="sudoPrompt" style="display: none; margin: 10px 0;">
+                    <label for="sudoPassword">Sudo Password:</label>
+                    <input type="password" id="sudoPassword" placeholder="Enter sudo password for enhanced isolation">
+                    <button class="btn" style="margin-left: 10px;" onclick="requestSudoAccess()">GRANT ACCESS</button>
+                </div>
+            </div>
+            
+            <button class="btn" id="analyzeBtn" onclick="startAnalysis()">ANALYZE FILE</button>
+            <button class="btn" id="isolatedAnalyzeBtn" onclick="startIsolatedAnalysis()" style="margin-left: 10px; background-color: #cc0000; color: white;">ANALYZE WITH ISOLATION</button>
+        </div>
+
+        <!-- Static Analysis Forms -->
+        <div class="analysis-form" id="staticForm" style="display: none;">
+            <h3>Static File Analysis</h3>
+            <div class="form-group">
+                <label for="staticFilePath">File Path:</label>
+                <input type="text" id="staticFilePath" placeholder="/path/to/suspicious/file" value="/Users/ca5/Desktop/sentinal/samples/static_test_malware.py">
+            </div>
+            <div class="form-group">
+                <button class="btn" onclick="staticAnalyze()">STATIC SCAN</button>
+                <button class="btn" onclick="entropyAnalysis()">ENTROPY ANALYSIS</button>
+                <button class="btn" onclick="hashLookup()">HASH LOOKUP</button>
+            </div>
+        </div>
+
+        <div class="analysis-form" id="directoryForm" style="display: none;">
+            <h3>Directory Quick Scan</h3>
+            <div class="form-group">
+                <label for="directoryPath">Directory Path:</label>
+                <input type="text" id="directoryPath" placeholder="/path/to/directory" value="/Users/ca5/Desktop/sentinal/samples">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="recursiveScan"> Recursive Scan
+                </label>
+            </div>
+            <div class="form-group">
+                <button class="btn" onclick="directoryScan()">SCAN DIRECTORY</button>
+            </div>
+        </div>
+
+        <div class="status" id="status" style="display: none;">
+            Ready for analysis
+        </div>
+
+        <div class="results" id="results">
+            <!-- Suspicious patterns section -->
+            <div class="suspicious-patterns" id="suspiciousPatterns" style="display: none;">
+                <h3>🚨 SUSPICIOUS PATTERNS DETECTED</h3>
+                <div id="patternList"></div>
+            </div>
+
+            <!-- Overview metrics -->
+            <div class="results-section">
+                <h3>ANALYSIS OVERVIEW</h3>
+                <div class="results-grid">
+                    <div class="metric">
+                        <div class="metric-value" id="totalSyscalls">0</div>
+                        <div class="metric-label">Total System Calls</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="uniqueSyscalls">0</div>
+                        <div class="metric-label">Unique System Calls</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="totalProcesses">0</div>
+                        <div class="metric-label">Processes Spawned</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="analysisTime">0s</div>
+                        <div class="metric-label">Analysis Duration</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="fileOps">0</div>
+                        <div class="metric-label">File Operations</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="networkOps">0</div>
+                        <div class="metric-label">Network Operations</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Process Tree -->
+            <div class="results-section">
+                <h3>PROCESS TREE</h3>
+                <div class="process-tree" id="processTree">
+                    No process data available
+                </div>
+            </div>
+
+            <!-- System Calls -->
+            <div class="results-section">
+                <h3>SYSTEM CALLS</h3>
+                <div class="syscall-list" id="syscallList">
+                    No syscall data available
+                </div>
+            </div>
+
+            <!-- Network Analysis -->
+            <div class="results-section">
+                <h3>NETWORK ANALYSIS</h3>
+                <div class="results-grid">
+                    <div class="metric">
+                        <div class="metric-value" id="totalConnections">0</div>
+                        <div class="metric-label">Total Connections</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="uniqueDestinations">0</div>
+                        <div class="metric-label">Unique Destinations</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="networkProtocols">0</div>
+                        <div class="metric-label">Protocols Used</div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <h4 style="margin-bottom: 10px; color: #333333; border-bottom: 1px solid #333333; padding-bottom: 5px;">Network Requests & Communications</h4>
+                    <div class="log-output" id="networkRequestsDetails">
+                        No network activity detected
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <h4 style="margin-bottom: 10px; color: #333333; border-bottom: 1px solid #333333; padding-bottom: 5px;">Connection Details</h4>
+                    <div class="log-output" id="networkConnectionsDetails">
+                        No connections monitored
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Analysis -->
+            <div class="results-section" id="aiAnalysisSection" style="display: none;">
+                <h3> AI ANALYSIS</h3>
+                <div style="margin-bottom: 15px;">
+                    <button class="btn" id="aiAnalyzeBtn" onclick="performAIAnalysis()">ANALYZE WITH AI</button>
+                    <span id="aiStatus" style="margin-left: 10px; color: #666666;"></span>
+                </div>
+                <div class="log-output" id="aiAnalysisResults">
+                    Click "ANALYZE WITH AI" to get intelligent threat assessment
+                </div>
+            </div>
+
+            <!-- Monitor Output -->
+            <div class="results-section">
+                <h3>EXECUTION OUTPUT</h3>
+                <div class="log-output" id="monitorOutput">
+                    No output available
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let analysisInProgress = false;
+
+        // Load platform information on page load
+        window.addEventListener('load', function() {
+            loadPlatformInfo();
+            loadIsolationStatus();
+            setupIsolationControls();
+        });
+
+        async function loadPlatformInfo() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                const platformInfo = document.getElementById('platformInfo');
+                platformInfo.textContent = `Platform: ${status.platform} on ${status.architecture} | Analyses completed: ${status.analyses_completed}`;
+            } catch (error) {
+                document.getElementById('platformInfo').textContent = 'Platform information unavailable';
+            }
+        }
+
+        // Isolation System Functions
+        async function loadIsolationStatus() {
+            try {
+                const response = await fetch('/api/isolation/status');
+                const data = await response.json();
+                
+                const statusDiv = document.getElementById('isolationStatus');
+                
+                if (data.available) {
+                    const status = data.status;
+                    const level = status.level;
+                    const score = status.security_score;
+                    
+                    let levelClass = 'low';
+                    if (score >= 70) levelClass = 'high';
+                    else if (score >= 40) levelClass = 'medium';
+                    
+                    statusDiv.innerHTML = `
+                        <div class="isolation-status ${levelClass}">
+                            🛡️ Isolation Level: <strong>${level.toUpperCase()}</strong>
+                            <span class="security-score ${levelClass}">${score}/100</span>
+                        </div>
+                        <div style="font-size: 11px; margin-top: 5px;">
+                            Active: ${Object.entries(status.capabilities)
+                                .filter(([k, v]) => v)
+                                .map(([k, v]) => k.replace('_', ' '))
+                                .join(', ')}
+                        </div>
+                    `;
+                } else {
+                    statusDiv.innerHTML = `
+                        <div class="isolation-status low">
+                            ❌ Isolation system not available: ${data.error}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('isolationStatus').innerHTML = `
+                    <div class="isolation-status low">
+                        ❌ Failed to load isolation status
+                    </div>
+                `;
+            }
+        }
+
+        function setupIsolationControls() {
+            // Auto-isolation controls
+            const enableAutoCheckbox = document.getElementById('enableAutoIsolation');
+            const useManualCheckbox = document.getElementById('useManualIsolation');
+            const manualControls = document.getElementById('manualIsolationControls');
+            const riskAssessment = document.getElementById('riskAssessment');
+            
+            // Legacy sudo controls
+            const useSudoCheckbox = document.getElementById('useSudo');
+            const sudoPrompt = document.getElementById('sudoPrompt');
+            
+            // Handle auto-isolation toggle
+            enableAutoCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    useManualCheckbox.checked = false;
+                    manualControls.style.display = 'none';
+                    // Trigger risk assessment for current file
+                    const filePath = document.getElementById('filePath').value;
+                    if (filePath && filePath !== '/path/to/suspicious/file') {
+                        performRiskAssessment(filePath);
+                    }
+                }
+            });
+            
+            // Handle manual isolation toggle
+            useManualCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    enableAutoCheckbox.checked = false;
+                    manualControls.style.display = 'block';
+                    riskAssessment.style.display = 'none';
+                } else {
+                    manualControls.style.display = 'none';
+                }
+            });
+            
+            // Handle file path changes for auto risk assessment
+            const filePathInput = document.getElementById('filePath');
+            filePathInput.addEventListener('blur', function() {
+                if (enableAutoCheckbox.checked && this.value && this.value !== '/path/to/suspicious/file') {
+                    performRiskAssessment(this.value);
+                }
+            });
+            
+            // Legacy sudo handling
+            useSudoCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    sudoPrompt.style.display = 'block';
+                    // Disable auto-isolation when using legacy sudo
+                    enableAutoCheckbox.checked = false;
+                    useManualCheckbox.checked = true;
+                    manualControls.style.display = 'block';
+                    document.getElementById('isolationLevel').value = 'maximum';
+                } else {
+                    sudoPrompt.style.display = 'none';
+                }
+            });
+        }
+
+        async function performRiskAssessment(filePath) {
+            const riskAssessment = document.getElementById('riskAssessment');
+            const riskScore = document.getElementById('riskScore');
+            const riskLevel = document.getElementById('riskLevel');
+            const recommendedIsolation = document.getElementById('recommendedIsolation');
+            
+            try {
+                // Show loading state
+                riskAssessment.style.display = 'block';
+                riskScore.innerHTML = '<span style="color: #666;">Assessing risk...</span>';
+                riskLevel.innerHTML = '';
+                recommendedIsolation.innerHTML = '';
+                
+                const response = await fetch('/api/isolation/risk-assess', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    const assessment = data.assessment;
+                    
+                    // Color-code risk score
+                    let scoreColor = '#28a745'; // Green
+                    if (assessment.overall_score > 75) scoreColor = '#dc3545'; // Red
+                    else if (assessment.overall_score > 50) scoreColor = '#fd7e14'; // Orange
+                    else if (assessment.overall_score > 25) scoreColor = '#ffc107'; // Yellow
+                    
+                    riskScore.innerHTML = `<strong>Risk Score: <span style="color: ${scoreColor}">${assessment.overall_score}/100</span></strong>`;
+                    riskLevel.innerHTML = `Risk Level: <strong style="text-transform: uppercase; color: ${scoreColor}">${assessment.risk_level}</strong>`;
+                    recommendedIsolation.innerHTML = `Recommended: <strong>${assessment.recommended_isolation}</strong> isolation`;
+                    
+                    // Store assessment data for use during analysis
+                    window.currentRiskAssessment = assessment;
+                    
+                } else {
+                    riskScore.innerHTML = `<span style="color: #dc3545;">Risk assessment failed: ${data.error}</span>`;
+                    riskLevel.innerHTML = '';
+                    recommendedIsolation.innerHTML = '';
+                }
+                
+            } catch (error) {
+                riskScore.innerHTML = `<span style="color: #dc3545;">Network error: ${error.message}</span>`;
+                riskLevel.innerHTML = '';
+                recommendedIsolation.innerHTML = '';
+            }
+        }
+
+        async function requestSudoAccess() {
+            const password = document.getElementById('sudoPassword').value;
+            
+            if (!password) {
+                alert('Please enter your sudo password');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/isolation/request-sudo', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ password: password })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('Sudo access granted - enhanced isolation available', 'success');
+                    document.getElementById('sudoPassword').value = '';
+                    // Reload isolation status to show updated capabilities
+                    loadIsolationStatus();
+                } else {
+                    showStatus(`Sudo authentication failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Failed to authenticate: ${error.message}`, 'error');
+            }
+        }
+
+        async function startIsolatedAnalysis() {
+            if (analysisInProgress) return;
+
+            const filePath = document.getElementById('filePath').value;
+            const timeout = parseInt(document.getElementById('timeout').value);
+            const useIsolation = document.getElementById('useIsolation').checked;
+            
+            // Auto-isolation controls
+            const enableAutoIsolation = document.getElementById('enableAutoIsolation').checked;
+            const useManualIsolation = document.getElementById('useManualIsolation').checked;
+            const isolationLevel = document.getElementById('isolationLevel').value;
+            
+            // Legacy sudo control
+            const useSudo = document.getElementById('useSudo').checked;
+
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+
+            if (!useIsolation) {
+                if (!confirm('You are about to analyze malware WITHOUT isolation. This is dangerous! Continue?')) {
+                    return;
+                }
+            }
+
+            // Show risk assessment warning for high-risk files
+            if (enableAutoIsolation && window.currentRiskAssessment && window.currentRiskAssessment.overall_score > 75) {
+                if (!confirm(`HIGH RISK FILE DETECTED (${window.currentRiskAssessment.overall_score}/100)!\n\nRecommended isolation: ${window.currentRiskAssessment.recommended_isolation}\n\nContinue with analysis?`)) {
+                    return;
+                }
+            }
+
+            analysisInProgress = true;
+            const analyzeBtn = document.getElementById('isolatedAnalyzeBtn');
+            analyzeBtn.textContent = 'ANALYZING...';
+            analyzeBtn.disabled = true;
+
+            // Determine isolation configuration
+            let isolationConfig = 'auto';
+            if (useSudo) {
+                isolationConfig = 'maximum (legacy sudo)';
+                showStatus('Starting analysis with legacy sudo isolation...', 'analyzing');
+            } else if (useManualIsolation) {
+                isolationConfig = isolationLevel;
+                showStatus(`Starting analysis with manual ${isolationLevel} isolation...`, 'analyzing');
+            } else if (enableAutoIsolation) {
+                isolationConfig = window.currentRiskAssessment ? 
+                    window.currentRiskAssessment.recommended_isolation : 'auto';
+                showStatus(`Starting analysis with auto-selected isolation (${isolationConfig})...`, 'analyzing');
+            } else {
+                showStatus('Starting analysis with default isolation...', 'analyzing');
+            }
+
+            try {
+                const requestBody = {
+                    file_path: filePath,
+                    timeout: timeout,
+                    enable_auto_isolation: enableAutoIsolation,
+                    use_sudo: useSudo  // Legacy support
+                };
+
+                // Add manual isolation override if selected
+                if (useManualIsolation) {
+                    requestBody.isolation_level = isolationLevel;
+                    requestBody.enable_auto_isolation = false;
+                }
+
+                const response = await fetch('/api/isolation/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showStatus(`Analysis completed with ${isolationConfig} isolation`, 'success');
+                    displayIsolatedResults(data.result);
+                } else {
+                    showStatus(`Isolated analysis failed: ${data.error}`, 'error');
+                }
+
+            } catch (error) {
+                showStatus(`Analysis request failed: ${error.message}`, 'error');
+            } finally {
+                analysisInProgress = false;
+                analyzeBtn.textContent = 'ANALYZE WITH ISOLATION';
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        function displayIsolatedResults(result) {
+            const execution = result.execution_result;
+            const analysis = result.analysis;
+            const isolation = result.isolation_metadata;
+            const riskAssessment = result.risk_assessment;
+
+            // Show results sections
+            document.getElementById('resultsContainer').style.display = 'block';
+            
+            // Clear previous results
+            const resultsContainer = document.getElementById('resultsContainer');
+            resultsContainer.innerHTML = '';
+
+            // Display risk assessment information if available
+            if (riskAssessment && !riskAssessment.error) {
+                const riskInfo = document.createElement('div');
+                riskInfo.className = 'results-section';
+                
+                let riskColor = '#28a745'; // Green
+                if (riskAssessment.overall_score > 75) riskColor = '#dc3545'; // Red
+                else if (riskAssessment.overall_score > 50) riskColor = '#fd7e14'; // Orange  
+                else if (riskAssessment.overall_score > 25) riskColor = '#ffc107'; // Yellow
+                
+                let factorsHtml = '';
+                if (riskAssessment.factors) {
+                    factorsHtml = '<div style="margin-top: 10px;"><strong>Key Risk Factors:</strong><ul>';
+                    riskAssessment.factors.slice(0, 3).forEach(factor => {
+                        factorsHtml += `<li>${factor.name}: ${factor.score}/100 (${factor.evidence[0] || 'No details'})</li>`;
+                    });
+                    factorsHtml += '</ul></div>';
+                }
+                
+                riskInfo.innerHTML = `
+                    <h3>🎯 RISK ASSESSMENT</h3>
+                    <div style="background: #f9f9f9; border: 2px solid ${riskColor}; padding: 15px; margin-bottom: 15px;">
+                        <div><strong>Risk Score:</strong> <span style="color: ${riskColor}; font-weight: bold;">${riskAssessment.overall_score}/100</span></div>
+                        <div><strong>Risk Level:</strong> <span style="color: ${riskColor}; text-transform: uppercase; font-weight: bold;">${riskAssessment.risk_level}</span></div>
+                        <div><strong>Auto-Isolation:</strong> ${riskAssessment.auto_isolation ? 'Yes' : 'No (Manual Override)'}</div>
+                        ${factorsHtml}
+                    </div>
+                `;
+                resultsContainer.appendChild(riskInfo);
+            }
+
+            // Display isolation information
+            const isolationInfo = document.createElement('div');
+            isolationInfo.className = 'results-section';
+            
+            const effectiveLevel = isolation.effective_isolation || isolation.isolation_level;
+            const autoEnabled = isolation.auto_isolation_enabled ? '🤖 ' : '';
+            const manualOverride = isolation.manual_override ? ` (Manual: ${isolation.manual_override})` : '';
+            
+            isolationInfo.innerHTML = `
+                <h3>🔒 ISOLATION ANALYSIS</h3>
+                <div style="background: #f8f8f8; border: 2px solid #333; padding: 15px; margin-bottom: 15px;">
+                    <div><strong>Isolation Level:</strong> ${autoEnabled}${effectiveLevel}${manualOverride}</div>
+                    <div><strong>Security Score:</strong> ${isolation.security_score}/100</div>
+                    <div><strong>Execution Time:</strong> ${execution?.execution_time?.toFixed(2) || 'N/A'}s</div>
+                    <div><strong>Return Code:</strong> ${execution?.returncode || 'N/A'}</div>
+                    <div><strong>Timed Out:</strong> ${execution?.timed_out ? 'Yes' : 'No'}</div>
+                    <div><strong>Auto-Isolation Enabled:</strong> ${isolation.auto_isolation_enabled ? 'Yes' : 'No'}</div>
+                </div>
+            `;
+
+            // Insert isolation info 
+            resultsContainer.appendChild(isolationInfo);
+
+            // Display standard analysis results
+            displayResults({
+                syscalls: analysis.system_calls,
+                processes: [],
+                process_tree: execution.process_tree || {},
+                output: execution.stdout + execution.stderr,
+                network_data: analysis.network_operations
+            });
+
+            // Show suspicious activities
+            if (analysis.suspicious_activities && analysis.suspicious_activities.length > 0) {
+                const suspiciousSection = document.createElement('div');
+                suspiciousSection.className = 'results-section';
+                suspiciousSection.innerHTML = `
+                    <h3>⚠️ SUSPICIOUS ACTIVITIES</h3>
+                    <div class="log-output">
+                        ${analysis.suspicious_activities.map(activity => 
+                            `<div style="margin: 5px 0; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107;">
+                                <strong>${activity.type}:</strong> ${activity.pattern || activity.description || JSON.stringify(activity)}
+                            </div>`
+                        ).join('')}
+                    </div>
+                `;
+                resultsContainer.appendChild(suspiciousSection);
+            }
+        }
+
+        function showStatus(message, type = 'info') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.style.display = 'block';
+            
+            // Reset classes
+            statusEl.className = 'status';
+            
+            if (type === 'analyzing') {
+                statusEl.classList.add('analyzing');
+            } else if (type === 'error') {
+                statusEl.classList.add('error');
+            } else if (type === 'success') {
+                statusEl.classList.add('success');
+            }
+        }
+
+        function hideStatus() {
+            document.getElementById('status').style.display = 'none';
+        }
+
+        async function startAnalysis() {
+            if (analysisInProgress) return;
+
+            const filePath = document.getElementById('filePath').value.trim();
+            const timeout = parseInt(document.getElementById('timeout').value);
+
+            if (!filePath) {
+                showStatus('Please enter a file path', 'error');
+                return;
+            }
+
+            analysisInProgress = true;
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'ANALYZING...';
+
+            showStatus('Starting analysis...', 'analyzing');
+            document.getElementById('results').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        file_path: filePath,
+                        timeout: timeout
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Analysis failed');
+                }
+
+                showStatus('Analysis completed successfully!', 'success');
+                displayResults(result);
+                loadPlatformInfo(); // Refresh platform info
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+                console.error('Analysis error:', error);
+            } finally {
+                analysisInProgress = false;
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'ANALYZE FILE';
+            }
+        }
+
+        function displayResults(data) {
+            // Show results section
+            document.getElementById('results').style.display = 'block';
+
+            // Update metrics
+            document.getElementById('totalSyscalls').textContent = data.total_syscalls || 0;
+            document.getElementById('uniqueSyscalls').textContent = data.syscall_analysis?.unique_syscalls || 0;
+            document.getElementById('totalProcesses').textContent = data.total_processes || 0;
+            document.getElementById('analysisTime').textContent = `${data.duration?.toFixed(2) || 0}s`;
+            document.getElementById('fileOps').textContent = data.syscall_analysis?.file_operations || 0;
+            document.getElementById('networkOps').textContent = data.syscall_analysis?.network_operations || 0;
+
+            // Show suspicious patterns if any
+            const suspiciousPatterns = data.syscall_analysis?.suspicious_patterns || [];
+            if (suspiciousPatterns.length > 0) {
+                const patternsEl = document.getElementById('suspiciousPatterns');
+                const patternListEl = document.getElementById('patternList');
+                
+                patternListEl.innerHTML = suspiciousPatterns
+                    .map(pattern => `<div class="pattern-item">⚠️ ${pattern}</div>`)
+                    .join('');
+                
+                patternsEl.style.display = 'block';
+            } else {
+                document.getElementById('suspiciousPatterns').style.display = 'none';
+            }
+
+            // Display process tree
+            displayProcessTree(data.process_tree);
+
+            // Display system calls
+            displaySyscalls(data.syscalls || []);
+
+            // Display network analysis
+            displayNetworkAnalysis(data.network_analysis);
+
+            // Display execution output
+            displayExecutionOutput(data.monitor_output);
+
+            // Show AI analysis section for dynamic analysis
+            document.getElementById('aiAnalysisSection').style.display = 'block';
+            window.currentAnalysisData = data; // Store for AI analysis
+
+            // Scroll to results
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function displayProcessTree(processTree) {
+            const treeEl = document.getElementById('processTree');
+            
+            if (!processTree || !processTree.tree) {
+                treeEl.textContent = 'No process tree data available';
+                return;
+            }
+
+            let treeHTML = '';
+            
+            function renderProcess(pid, level = 0) {
+                const process = processTree.tree[pid];
+                if (!process) return '';
+
+                const indent = '  '.repeat(level);
+                const status = process.status === 'exited' ? '●' : '○';
+                const isRoot = level === 0;
+                const cssClass = isRoot ? 'root' : 'child';
+                
+                let html = `<div class="process-node ${cssClass}">`;
+                html += `${indent}${status} PID:${pid} (${process.executable}) [${process.status}]`;
+                html += `</div>`;
+
+                // Render children
+                if (process.children && process.children.length > 0) {
+                    for (const childPid of process.children) {
+                        html += renderProcess(childPid, level + 1);
+                    }
+                }
+
+                return html;
+            }
+
+            // Render all root processes
+            for (const rootPid of processTree.roots || []) {
+                treeHTML += renderProcess(rootPid);
+            }
+
+            treeEl.innerHTML = treeHTML || 'No processes to display';
+        }
+
+        function displaySyscalls(syscalls) {
+            const listEl = document.getElementById('syscallList');
+            
+            if (!syscalls || syscalls.length === 0) {
+                listEl.textContent = 'No syscall data available';
+                return;
+            }
+
+            const suspiciousCalls = new Set(['execve', 'socket', 'connect', 'unlink', 'kill', 'fork', 'clone']);
+
+            const syscallHTML = syscalls.map(sc => {
+                const timestamp = new Date(sc.timestamp * 1000).toLocaleTimeString();
+                const isSuspicious = suspiciousCalls.has(sc.name);
+                const cssClass = isSuspicious ? 'syscall-item suspicious' : 'syscall-item';
+                
+                return `<div class="${cssClass}">
+                    ${timestamp} | PID:${sc.pid} | ${sc.name}()
+                </div>`;
+            }).join('');
+
+            listEl.innerHTML = syscallHTML;
+        }
+
+        function displayExecutionOutput(output) {
+            const outputEl = document.getElementById('monitorOutput');
+            
+            if (!output) {
+                outputEl.textContent = 'No execution output available';
+                return;
+            }
+
+            let displayText = '';
+            
+            if (output.stdout) {
+                displayText += '=== STDOUT ===\n' + output.stdout + '\n\n';
+            }
+            
+            if (output.stderr) {
+                displayText += '=== STDERR ===\n' + output.stderr + '\n\n';
+            }
+
+            if (output.return_code !== undefined) {
+                displayText += `=== EXIT CODE ===\n${output.return_code}`;
+            }
+
+            outputEl.textContent = displayText || 'No output captured';
+        }
+
+        function displayNetworkAnalysis(networkData) {
+            // Update network metrics
+            document.getElementById('totalConnections').textContent = networkData?.total_connections || 0;
+            document.getElementById('uniqueDestinations').textContent = networkData?.unique_destinations || 0;
+            document.getElementById('networkProtocols').textContent = networkData?.protocols_used?.length || 0;
+
+            // Display network requests details
+            const requestsEl = document.getElementById('networkRequestsDetails');
+            const connectionsEl = document.getElementById('networkConnectionsDetails');
+            
+            if (!networkData || (!networkData.network_requests && !networkData.monitored_connections)) {
+                requestsEl.textContent = 'No network activity detected';
+                connectionsEl.textContent = 'No connections monitored';
+                return;
+            }
+
+            // Display network requests
+            let requestsText = '';
+            if (networkData.network_requests && networkData.network_requests.length > 0) {
+                requestsText += '=== NETWORK REQUESTS DETECTED ===\n\n';
+                networkData.network_requests.forEach((request, index) => {
+                    const timestamp = new Date(request.timestamp * 1000).toLocaleTimeString();
+                    requestsText += `[${timestamp}] ${request.type.toUpperCase()}\n`;
+                    if (request.pid) requestsText += `  Process PID: ${request.pid}\n`;
+                    requestsText += `  Protocol: ${request.protocol}\n`;
+                    requestsText += `  Destination: ${request.destination}\n`;
+                    requestsText += `  Hostname: ${request.hostname}\n`;
+                    requestsText += `  Status: ${request.status}\n`;
+                    requestsText += `  Description: ${request.description}\n\n`;
+                });
+            } else {
+                requestsText = 'No specific network requests detected in output or monitoring.';
+            }
+            requestsEl.textContent = requestsText;
+
+            // Display connection details
+            let connectionsText = '';
+            if (networkData.monitored_connections && networkData.monitored_connections.length > 0) {
+                connectionsText += '=== MONITORED CONNECTIONS ===\n\n';
+                connectionsText += `Total Connections: ${networkData.total_connections}\n`;
+                connectionsText += `Unique Destinations: ${networkData.unique_destinations}\n`;
+                connectionsText += `Protocols Used: ${networkData.protocols_used?.join(', ') || 'None'}\n`;
+                connectionsText += `Remote Hosts: ${networkData.remote_hosts?.join(', ') || 'None'}\n\n`;
+                
+                connectionsText += '=== CONNECTION DETAILS ===\n\n';
+                networkData.monitored_connections.forEach((conn, index) => {
+                    const timestamp = new Date(conn.timestamp * 1000).toLocaleTimeString();
+                    connectionsText += `[${timestamp}] Connection ${index + 1}\n`;
+                    if (conn.pid) connectionsText += `  Process PID: ${conn.pid}\n`;
+                    connectionsText += `  Protocol: ${conn.family}/${conn.type}\n`;
+                    connectionsText += `  Local: ${conn.local_addr || 'N/A'}\n`;
+                    connectionsText += `  Remote: ${conn.remote_addr || 'N/A'}\n`;
+                    connectionsText += `  Hostname: ${conn.remote_host || 'Unresolved'}\n`;
+                    connectionsText += `  Status: ${conn.status}\n\n`;
+                });
+            } else {
+                connectionsText = 'No network connections were monitored during execution.';
+            }
+            connectionsEl.textContent = connectionsText;
+        }
+
+        // Toggle between analysis modes
+        function toggleAnalysisMode() {
+            const mode = document.querySelector('input[name="analysisMode"]:checked').value;
+            const dynamicForm = document.getElementById('dynamicForm');
+            const staticForm = document.getElementById('staticForm');
+            const directoryForm = document.getElementById('directoryForm');
+            
+            if (mode === 'dynamic') {
+                dynamicForm.style.display = 'block';
+                staticForm.style.display = 'none';
+                directoryForm.style.display = 'none';
+            } else {
+                dynamicForm.style.display = 'none';
+                staticForm.style.display = 'block';
+                directoryForm.style.display = 'block';
+            }
+            
+            // Clear results when switching modes
+            clearResults();
+        }
+        
+        // Static analysis functions
+        async function staticAnalyze() {
+            const filePath = document.getElementById('staticFilePath').value.trim();
+            
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+            
+            showStatus('Performing static analysis...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/static-scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayStaticResults(result);
+                } else {
+                    showStatus(`Static analysis failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function entropyAnalysis() {
+            const filePath = document.getElementById('staticFilePath').value.trim();
+            
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+            
+            showStatus('Analyzing file entropy...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/entropy-analysis', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayEntropyResults(result);
+                } else {
+                    showStatus(`Entropy analysis failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function hashLookup() {
+            const filePath = document.getElementById('staticFilePath').value.trim();
+            
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+            
+            showStatus('Calculating hashes and checking threat intelligence...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/hash-lookup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayHashResults(result);
+                } else {
+                    showStatus(`Hash lookup failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function directoryScan() {
+            const directoryPath = document.getElementById('directoryPath').value.trim();
+            const recursive = document.getElementById('recursiveScan').checked;
+            
+            if (!directoryPath) {
+                alert('Please enter a directory path');
+                return;
+            }
+            
+            showStatus('Scanning directory...');
+            clearResults();
+            
+            try {
+                const response = await fetch('/api/directory-scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        directory_path: directoryPath,
+                        recursive: recursive
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    displayDirectoryResults(result);
+                } else {
+                    showStatus(`Directory scan failed: ${result.error}`);
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        function displayStaticResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            // Build static analysis results HTML
+            let html = `
+                <div class="results-section">
+                    <h3>STATIC ANALYSIS RESULTS</h3>
+                    <div class="log-output">
+                        <strong>File:</strong> ${data.file_path}
+                        <strong>Analysis Time:</strong> ${new Date(data.timestamp).toLocaleString()}
+                        <strong>Risk Level:</strong> ${data.risk_assessment?.risk_level || 'Unknown'}
+                        <strong>Risk Score:</strong> ${data.risk_assessment?.risk_score || 0}/100
+                        
+                        <strong>File Information:</strong>
+                        Size: ${data.file_info?.size || 'Unknown'} bytes
+                        Extension: ${data.file_info?.extension || 'Unknown'}
+                        
+                        <strong>Entropy Analysis:</strong>
+                        Overall Entropy: ${data.entropy?.overall_entropy || 'N/A'}
+                        Suspicion Level: ${data.entropy?.suspicion_level || 'Unknown'}
+                        ${data.entropy?.suspicion_reasons?.length > 0 ? 'Reasons: ' + data.entropy.suspicion_reasons.join(', ') : ''}
+                        
+                        <strong>File Hashes:</strong>
+                        MD5: ${data.hashes?.md5 || 'N/A'}
+                        SHA1: ${data.hashes?.sha1 || 'N/A'}
+                        SHA256: ${data.hashes?.sha256 || 'N/A'}
+                        
+                        <strong>Threat Intelligence:</strong>
+                        ${data.virustotal?.found ? `VirusTotal: ${data.virustotal.positives}/${data.virustotal.total} detections` : 'VirusTotal: Not found'}
+                        ${data.malware_bazaar?.found ? `MalwareBazaar: ${data.malware_bazaar.malware_family}` : 'MalwareBazaar: Not found'}
+                        
+                        <strong>String Analysis:</strong>
+                        Total Strings: ${data.strings?.total_strings || 0}
+                        Suspicious Strings: ${data.strings?.suspicious_strings?.length || 0}
+                        
+                        ${data.strings?.suspicious_strings?.length > 0 ? 
+                            '<strong>Suspicious Strings Found:</strong>\\n' + 
+                            data.strings.suspicious_strings.slice(0, 10).map(s => '  - ' + s).join('\\n') : ''}
+                        
+                        ${data.risk_assessment?.risk_factors?.length > 0 ? 
+                            '<strong>Risk Factors:</strong>\\n' + 
+                            data.risk_assessment.risk_factors.map(f => '  • ' + f).join('\\n') : ''}
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function displayEntropyResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            let html = `
+                <div class="results-section">
+                    <h3>ENTROPY ANALYSIS</h3>
+                    <div class="log-output">
+                        <strong>File:</strong> ${data.file_path || 'Unknown'}
+                        <strong>File Size:</strong> ${data.file_size || 0} bytes
+                        
+                        <strong>Entropy Metrics:</strong>
+                        Overall Entropy: ${data.overall_entropy || 'N/A'} (0-8 scale)
+                        Average Chunk Entropy: ${data.average_chunk_entropy || 'N/A'}
+                        Entropy Variance: ${data.entropy_variance || 'N/A'}
+                        Chunks Analyzed: ${data.chunk_count || 0}
+                        
+                        <strong>Suspicion Assessment:</strong>
+                        Level: ${data.suspicion_level || 'Unknown'}
+                        ${data.suspicion_reasons?.length > 0 ? 
+                            'Reasons:\\n' + data.suspicion_reasons.map(r => '  • ' + r).join('\\n') : 'No specific concerns'}
+                        
+                        <strong>Interpretation:</strong>
+                        • Entropy 0-3: Low (plain text, repetitive data)
+                        • Entropy 3-6: Medium (mixed content, some compression)
+                        • Entropy 6-7.5: High (compressed, encoded data)
+                        • Entropy 7.5-8: Very High (encrypted, packed malware)
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function displayHashResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            let html = `
+                <div class="results-section">
+                    <h3>HASH LOOKUP RESULTS</h3>
+                    <div class="log-output">
+                        <strong>File Hashes:</strong>
+                        MD5: ${data.hashes?.md5 || 'N/A'}
+                        SHA1: ${data.hashes?.sha1 || 'N/A'}
+                        SHA256: ${data.hashes?.sha256 || 'N/A'}
+                        
+                        <strong>VirusTotal Results:</strong>
+                        ${data.virustotal?.found ? `
+                        Status: FOUND (⚠️ MALICIOUS)
+                        Detections: ${data.virustotal.positives}/${data.virustotal.total}
+                        Scan Date: ${data.virustotal.scan_date || 'Unknown'}
+                        Detection Names: ${data.virustotal.detection_names?.slice(0, 5).join(', ') || 'None'}
+                        ${data.virustotal.permalink ? 'Report: ' + data.virustotal.permalink : ''}
+                        ` : data.virustotal?.error ? 
+                        `Error: ${data.virustotal.error}` : 
+                        'Status: NOT FOUND (Clean)'}
+                        
+                        <strong>MalwareBazaar Results:</strong>
+                        ${data.malware_bazaar?.found ? `
+                        Status: FOUND (⚠️ KNOWN MALWARE)
+                        Malware Family: ${data.malware_bazaar.malware_family || 'Unknown'}
+                        File Type: ${data.malware_bazaar.file_type || 'Unknown'}
+                        First Seen: ${data.malware_bazaar.first_seen || 'Unknown'}
+                        Tags: ${data.malware_bazaar.tags?.join(', ') || 'None'}
+                        ` : data.malware_bazaar?.error ? 
+                        `Error: ${data.malware_bazaar.error}` : 
+                        'Status: NOT FOUND (Clean)'}
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function displayDirectoryResults(data) {
+            const resultsEl = document.getElementById('results');
+            
+            let html = `
+                <div class="results-section">
+                    <h3>DIRECTORY SCAN RESULTS</h3>
+                    <div class="log-output">
+                        <strong>Directory:</strong> ${data.directory || 'Unknown'}
+                        <strong>Scan Time:</strong> ${new Date(data.scan_timestamp).toLocaleString()}
+                        <strong>Total Files:</strong> ${data.total_files || 0}
+                        
+                        <strong>Summary:</strong>
+                        Detection Rate: ${data.summary?.detection_rate || '0%'}
+                        Total Detections: ${data.summary?.total_detections || 0}
+                        
+                        Risk Distribution:
+                        ${data.summary?.risk_distribution ? Object.entries(data.summary.risk_distribution)
+                            .map(([level, count]) => `  ${level}: ${count} files`).join('\\n') : 'N/A'}
+                        
+                        File Types Found:
+                        ${data.summary?.file_types ? Object.entries(data.summary.file_types)
+                            .map(([ext, count]) => `  ${ext || 'no extension'}: ${count} files`).join('\\n') : 'N/A'}
+                        
+                        <strong>High Risk Files:</strong>
+                        ${data.results?.filter(r => r.risk_assessment?.risk_level === 'High')
+                            .slice(0, 10)
+                            .map(r => `• ${r.file_path} (Score: ${r.risk_assessment.risk_score}/100)`)
+                            .join('\\n') || 'None detected'}
+                    </div>
+                </div>
+            `;
+            
+            resultsEl.innerHTML = html;
+            hideStatus();
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+
+        // AI Analysis function
+        async function performAIAnalysis() {
+            if (!window.currentAnalysisData) {
+                document.getElementById('aiAnalysisResults').textContent = 'No analysis data available. Run dynamic analysis first.';
+                return;
+            }
+
+            const aiBtn = document.getElementById('aiAnalyzeBtn');
+            const aiStatus = document.getElementById('aiStatus');
+            const aiResults = document.getElementById('aiAnalysisResults');
+
+            // Show loading state
+            aiBtn.disabled = true;
+            aiBtn.textContent = 'ANALYZING...';
+            aiStatus.textContent = 'Contacting AI analysis service...';
+            aiResults.textContent = 'Processing analysis data with AI...';
+
+            try {
+                const response = await fetch('/api/ai-analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        analysis_data: window.currentAnalysisData
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.ai_analysis) {
+                    if (result.ai_analysis.error) {
+                        aiResults.textContent = `AI Analysis Error: ${result.ai_analysis.error}`;
+                        aiStatus.textContent = 'Analysis failed';
+                    } else {
+                        // Display AI analysis results with markdown formatting
+                        displayAIAnalysis(result.ai_analysis);
+                        aiStatus.textContent = `Analysis completed (${result.ai_analysis.model || 'Gemini'})`;
+                    }
+                } else {
+                    aiResults.textContent = `Error: ${result.error || 'Unknown error occurred'}`;
+                    aiStatus.textContent = 'Analysis failed';
+                }
+            } catch (error) {
+                aiResults.textContent = `Network Error: ${error.message}`;
+                aiStatus.textContent = 'Connection failed';
+                console.error('AI Analysis error:', error);
+            } finally {
+                aiBtn.disabled = false;
+                aiBtn.textContent = 'ANALYZE WITH AI';
+            }
+        }
+
+        function displayAIAnalysis(aiData) {
+            const aiResults = document.getElementById('aiAnalysisResults');
+            
+            if (aiData.analysis) {
+                // Convert markdown-like formatting to HTML for better display
+                let analysis = aiData.analysis;
+                
+                // Convert markdown headers
+                analysis = analysis.replace(/## (.*)/g, '<strong style="font-size: 16px; color: #333; display: block; margin: 15px 0 10px 0; border-bottom: 1px solid #ccc; padding-bottom: 5px;">$1</strong>');
+                analysis = analysis.replace(/### (.*)/g, '<strong style="color: #555; display: block; margin: 10px 0 5px 0;">$1</strong>');
+                
+                // Convert markdown bold
+                analysis = analysis.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                
+                // Convert markdown bullets
+                analysis = analysis.replace(/^- (.*$)/gim, '• $1');
+                
+                // Convert newlines to breaks for proper display
+                analysis = analysis.replace(/\n/g, '<br>');
+                
+                aiResults.innerHTML = `
+                    <div style="line-height: 1.6;">
+                        ${analysis}
+                    </div>
+                    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee; font-size: 12px; color: #666;">
+                        <strong>Analysis Details:</strong><br>
+                        Model: ${aiData.model || 'Unknown'}<br>
+                        Timestamp: ${aiData.timestamp ? new Date(aiData.timestamp).toLocaleString() : 'Unknown'}<br>
+                        ${aiData.attempt ? `Attempt: ${aiData.attempt}` : ''}
+                        ${aiData.timeout_used ? `Timeout: ${aiData.timeout_used}s` : ''}
+                    </div>
+                `;
+            } else {
+                aiResults.textContent = 'No analysis content received from AI service.';
+            }
+        }
+
+        // Allow Enter key to start analysis
+        document.getElementById('filePath').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                startAnalysis();
+            }
+        });
+        
+        // Initialize isolation controls when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            loadIsolationStatus();
+            setupIsolationControls();
+        });
+    </script>
+</body>
+</html>

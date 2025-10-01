@@ -1,0 +1,8 @@
+flask
+flask-cors
+psutil
+matplotlib
+networkx
+numpy
+requests
+python-dotenv

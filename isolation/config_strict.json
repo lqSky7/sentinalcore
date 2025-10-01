@@ -1,0 +1,34 @@
+{
+  "use_namespaces": true,
+  "namespace_config": {
+    "use_pid_ns": true,
+    "use_mount_ns": true,
+    "use_net_ns": true,
+    "use_user_ns": true,
+    "use_ipc_ns": true,
+    "use_uts_ns": true,
+    "hostname": "malware-sandbox"
+  },
+  "use_chroot": true,
+  "chroot_config": {
+    "mount_proc": true,
+    "mount_dev": true,
+    "mount_tmp": true,
+    "shell": "/bin/bash"
+  },
+  "use_resource_limits": true,
+  "resource_limits": {
+    "cpu_quota": 25000,
+    "cpu_period": 100000,
+    "memory_limit": "64M",
+    "memory_swap_limit": "128M",
+    "pids_max": 8,
+    "execution_timeout": 20
+  },
+  "execution_timeout": 20,
+  "capture_strace": true,
+  "capture_network": true,
+  "monitor_file_access": true,
+  "monitor_network_activity": true,
+  "monitor_process_creation": true
+}

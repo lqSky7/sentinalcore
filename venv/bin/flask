@@ -1,4 +1,4 @@
-#!/Users/ca5/Projects/sentinalcore/venv/bin/python3
+#!/home/axiss/Documents/projects/SentinalCore/sentinalcore/venv/bin/python3
 import sys
 from flask.cli import main
 if __name__ == '__main__':
