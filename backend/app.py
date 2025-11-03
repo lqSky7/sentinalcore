@@ -31,6 +31,22 @@ except ImportError as e:
     print(f"Isolation system not available: {e}")
     isolation_available = False
 
+# Import VirusTotal scanner
+try:
+    from virustotal_scanner import VirusTotalScanner
+    virustotal_available = True
+except ImportError as e:
+    print(f"VirusTotal scanner not available: {e}")
+    virustotal_available = False
+
+# Import free malware scanner
+try:
+    from malware_scanner import MalwareScanner
+    free_scanner_available = True
+except ImportError as e:
+    print(f"Free malware scanner not available: {e}")
+    free_scanner_available = False
+
 app = Flask(__name__)
 CORS(app)
 
@@ -1295,6 +1311,198 @@ def request_sudo_permissions():
             'success': False,
             'error': f'Sudo authentication failed: {str(e)}'
         })
+
+# VirusTotal API Endpoints
+@app.route('/api/virustotal/scan', methods=['POST'])
+def virustotal_scan():
+    """Scan a file using VirusTotal API"""
+    if not virustotal_available:
+        return jsonify({
+            'success': False,
+            'error': 'VirusTotal scanner not available'
+        }), 500
+    
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({
+            'success': False,
+            'error': 'No data provided'
+        }), 400
+    
+    file_path = data.get('file_path')
+    api_key = data.get('api_key') or os.getenv('VT_API_KEY')
+    wait_for_result = data.get('wait_for_result', True)
+    max_wait = data.get('max_wait', 300)
+    
+    if not file_path:
+        return jsonify({
+            'success': False,
+            'error': 'file_path is required'
+        }), 400
+    
+    if not api_key:
+        return jsonify({
+            'success': False,
+            'error': 'VirusTotal API key required. Provide via api_key parameter or VT_API_KEY environment variable'
+        }), 400
+    
+    if not os.path.exists(file_path):
+        return jsonify({
+            'success': False,
+            'error': f'File not found: {file_path}'
+        }), 404
+    
+    try:
+        # Initialize scanner
+        scanner = VirusTotalScanner(api_key)
+        
+        # Perform scan
+        result = scanner.scan_file(
+            file_path,
+            wait_for_result=wait_for_result,
+            max_wait=max_wait
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'VirusTotal scan failed: {str(e)}'
+        }), 500
+
+@app.route('/api/virustotal/check-hash', methods=['POST'])
+def virustotal_check_hash():
+    """Check if a file hash exists in VirusTotal database"""
+    if not virustotal_available:
+        return jsonify({
+            'success': False,
+            'error': 'VirusTotal scanner not available'
+        }), 500
+    
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({
+            'success': False,
+            'error': 'No data provided'
+        }), 400
+    
+    file_hash = data.get('file_hash')
+    file_path = data.get('file_path')
+    api_key = data.get('api_key') or os.getenv('VT_API_KEY')
+    
+    if not api_key:
+        return jsonify({
+            'success': False,
+            'error': 'VirusTotal API key required'
+        }), 400
+    
+    try:
+        scanner = VirusTotalScanner(api_key)
+        
+        # Calculate hash if file path provided
+        if not file_hash and file_path:
+            if not os.path.exists(file_path):
+                return jsonify({
+                    'success': False,
+                    'error': f'File not found: {file_path}'
+                }), 404
+            file_hash = scanner.calculate_file_hash(file_path)
+        
+        if not file_hash:
+            return jsonify({
+                'success': False,
+                'error': 'Either file_hash or file_path is required'
+            }), 400
+        
+        # Check existing report
+        report = scanner.check_existing_report(file_hash)
+        
+        if report and 'error' not in report:
+            parsed = scanner.parse_scan_results(report)
+            return jsonify({
+                'success': True,
+                'found': True,
+                'file_hash': file_hash,
+                'results': parsed
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'found': False,
+                'file_hash': file_hash,
+                'message': 'File not found in VirusTotal database'
+            })
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Hash check failed: {str(e)}'
+        }), 500
+
+@app.route('/api/virustotal/status', methods=['GET'])
+def virustotal_status():
+    """Check VirusTotal integration status"""
+    api_key = os.getenv('VT_API_KEY')
+    
+    return jsonify({
+        'available': virustotal_available,
+        'api_key_configured': bool(api_key),
+        'message': 'VirusTotal integration ready' if (virustotal_available and api_key) else 'Configure VT_API_KEY environment variable'
+    })
+
+# Free Malware Scanner Endpoints (No API key required)
+@app.route('/api/malware-scan/free', methods=['POST'])
+def free_malware_scan():
+    """Scan file using free services (no API key required)"""
+    if not free_scanner_available:
+        return jsonify({
+            'success': False,
+            'error': 'Free malware scanner not available'
+        }), 500
+    
+    data = request.get_json()
+    
+    if not data or 'file_path' not in data:
+        return jsonify({
+            'success': False,
+            'error': 'file_path is required'
+        }), 400
+    
+    file_path = data['file_path']
+    
+    if not os.path.exists(file_path):
+        return jsonify({
+            'success': False,
+            'error': f'File not found: {file_path}'
+        }), 404
+    
+    try:
+        scanner = MalwareScanner()
+        result = scanner.comprehensive_scan(file_path)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Scan failed: {str(e)}'
+        }), 500
+
+@app.route('/api/malware-scan/status', methods=['GET'])
+def malware_scan_status():
+    """Check free malware scanner status"""
+    return jsonify({
+        'available': free_scanner_available,
+        'services': {
+            'malwarebazaar': 'abuse.ch - Known malware database',
+            'threatfox': 'abuse.ch - IOC database',
+            'hybrid_analysis': 'Public malware analysis'
+        },
+        'requires_api_key': False,
+        'rate_limits': 'None (completely free)',
+        'message': 'Free multi-service scanner ready' if free_scanner_available else 'Scanner not available'
+    })
 
 if __name__ == '__main__':
     # Ensure monitor is compiled

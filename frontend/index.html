@@ -359,6 +359,12 @@
                     Static Analysis (No Execution)
                 </label>
             </div>
+            <div class="form-group">
+                <label>
+                    <input type="radio" name="analysisMode" value="virustotal" onchange="toggleAnalysisMode()"> 
+                    Cloud Malware Scan (Free hash lookup + optional VirusTotal)
+                </label>
+            </div>
         </div>
 
         <!-- Dynamic Analysis Form -->
@@ -441,6 +447,58 @@
                 <button class="btn" onclick="staticAnalyze()">STATIC SCAN</button>
                 <button class="btn" onclick="entropyAnalysis()">ENTROPY ANALYSIS</button>
                 <button class="btn" onclick="hashLookup()">HASH LOOKUP</button>
+            </div>
+        </div>
+
+        <!-- VirusTotal Analysis Form -->
+        <div class="analysis-form" id="virusTotalForm" style="display: none;">
+            <h3>🛡️ Cloud Malware Scanning</h3>
+            
+            <!-- Service selection -->
+            <div class="form-group" style="background: #f0f0f0; padding: 15px; border: 1px solid #333; margin-bottom: 15px;">
+                <label style="font-weight: bold; margin-bottom: 10px; display: block;">Select Scanning Service:</label>
+                
+                <div style="margin: 10px 0;">
+                    <input type="radio" name="scanService" value="free" id="serviceFree" checked>
+                    <label for="serviceFree" style="display: inline; margin-left: 5px;">
+                        <strong style="color: #28a745;">FREE Scanner</strong> (No API key needed - MalwareBazaar, ThreatFox, Hybrid Analysis)
+                    </label>
+                </div>
+                
+                <div style="margin: 10px 0;">
+                    <input type="radio" name="scanService" value="virustotal" id="serviceVT">
+                    <label for="serviceVT" style="display: inline; margin-left: 5px;">
+                        <strong>VirusTotal</strong> (70+ engines, requires API key, rate limits apply)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="vtFilePath">File Path (APK, EXE, or any file):</label>
+                <input type="text" id="vtFilePath" placeholder="/path/to/suspicious/file.apk" value="">
+            </div>
+            
+            <!-- VirusTotal-specific options -->
+            <div id="vtOptions" style="display: none;">
+                <div class="form-group">
+                    <label for="vtApiKey">VirusTotal API Key:</label>
+                    <input type="password" id="vtApiKey" placeholder="Enter API key or set VT_API_KEY environment variable" value="">
+                    <small style="display: block; margin-top: 5px; color: #666;">Get your API key from <a href="https://www.virustotal.com/gui/user/YOUR_USERNAME/apikey" target="_blank">VirusTotal</a></small>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="vtWaitForResult" checked> Wait for scan results (may take 2-5 minutes)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <button class="btn" onclick="performCloudScan()" id="cloudScanBtn">SCAN FILE</button>
+                <button class="btn" onclick="checkHashOnly()" id="hashCheckBtn" style="margin-left: 10px;">HASH CHECK ONLY</button>
+            </div>
+            
+            <div id="scanStatusDiv" style="display: none; margin-top: 15px; padding: 10px; background: #f0f0f0; border: 1px solid #333; font-size: 12px;">
+                Loading scanner status...
             </div>
         </div>
 
@@ -1244,16 +1302,24 @@
             const mode = document.querySelector('input[name="analysisMode"]:checked').value;
             const dynamicForm = document.getElementById('dynamicForm');
             const staticForm = document.getElementById('staticForm');
+            const virusTotalForm = document.getElementById('virusTotalForm');
             const directoryForm = document.getElementById('directoryForm');
             
+            // Hide all forms first
+            dynamicForm.style.display = 'none';
+            staticForm.style.display = 'none';
+            virusTotalForm.style.display = 'none';
+            directoryForm.style.display = 'none';
+            
+            // Show selected form
             if (mode === 'dynamic') {
                 dynamicForm.style.display = 'block';
-                staticForm.style.display = 'none';
-                directoryForm.style.display = 'none';
-            } else {
-                dynamicForm.style.display = 'none';
+            } else if (mode === 'static') {
                 staticForm.style.display = 'block';
                 directoryForm.style.display = 'block';
+            } else if (mode === 'virustotal') {
+                virusTotalForm.style.display = 'block';
+                loadVirusTotalStatus();
             }
             
             // Clear results when switching modes
@@ -1660,6 +1726,417 @@
             loadIsolationStatus();
             setupIsolationControls();
         });
+
+        // VirusTotal Functions
+        async function loadVirusTotalStatus() {
+            const statusDiv = document.getElementById('scanStatusDiv');
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = 'Checking scanner status...';
+
+            // Setup service selection handler
+            setupScannerServiceSelection();
+
+            try {
+                const response = await fetch('/api/malware-scan/status');
+                const data = await response.json();
+
+                if (data.available) {
+                    statusDiv.innerHTML = '✅ Free scanner ready (No API key required)<br><small>Services: MalwareBazaar, ThreatFox, Hybrid Analysis</small>';
+                    statusDiv.style.background = '#d4edda';
+                    statusDiv.style.color = '#155724';
+                } else {
+                    statusDiv.innerHTML = '⚠️ Scanner unavailable';
+                    statusDiv.style.background = '#fff3cd';
+                    statusDiv.style.color = '#856404';
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '❌ Failed to check scanner status';
+                statusDiv.style.background = '#f8d7da';
+                statusDiv.style.color = '#721c24';
+            }
+        }
+
+        function setupScannerServiceSelection() {
+            const freeRadio = document.getElementById('serviceFree');
+            const vtRadio = document.getElementById('serviceVT');
+            const vtOptions = document.getElementById('vtOptions');
+            const statusDiv = document.getElementById('scanStatusDiv');
+
+            function updateServiceDisplay() {
+                if (freeRadio && freeRadio.checked) {
+                    vtOptions.style.display = 'none';
+                    statusDiv.innerHTML = '✅ Free multi-service scanner (No API key required)<br><small>MalwareBazaar, ThreatFox, Hybrid Analysis</small>';
+                    statusDiv.style.background = '#d4edda';
+                    statusDiv.style.color = '#155724';
+                } else if (vtRadio && vtRadio.checked) {
+                    vtOptions.style.display = 'block';
+                    checkVTStatus();
+                }
+            }
+
+            if (freeRadio) freeRadio.addEventListener('change', updateServiceDisplay);
+            if (vtRadio) vtRadio.addEventListener('change', updateServiceDisplay);
+
+            updateServiceDisplay();
+        }
+
+        async function checkVTStatus() {
+            const statusDiv = document.getElementById('scanStatusDiv');
+            try {
+                const response = await fetch('/api/virustotal/status');
+                const data = await response.json();
+
+                if (data.available && data.api_key_configured) {
+                    statusDiv.innerHTML = '✅ VirusTotal ready (API key configured)';
+                    statusDiv.style.background = '#d4edda';
+                    statusDiv.style.color = '#155724';
+                } else if (data.available) {
+                    statusDiv.innerHTML = '⚠️ VirusTotal available but API key not configured';
+                    statusDiv.style.background = '#fff3cd';
+                    statusDiv.style.color = '#856404';
+                } else {
+                    statusDiv.innerHTML = '❌ VirusTotal not available';
+                    statusDiv.style.background = '#f8d7da';
+                    statusDiv.style.color = '#721c24';
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '❌ Failed to check VirusTotal status';
+            }
+        }
+
+        async function performCloudScan() {
+            const filePath = document.getElementById('vtFilePath').value.trim();
+            const serviceType = document.querySelector('input[name="scanService"]:checked')?.value || 'free';
+            const scanBtn = document.getElementById('cloudScanBtn');
+
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+
+            scanBtn.disabled = true;
+            scanBtn.textContent = 'SCANNING...';
+            showStatus('Initiating malware scan...', 'analyzing');
+            clearResults();
+
+            try {
+                let result;
+                
+                if (serviceType === 'free') {
+                    // Use free scanner
+                    const response = await fetch('/api/malware-scan/free', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ file_path: filePath })
+                    });
+                    result = await response.json();
+                    
+                    if (result.success) {
+                        showStatus('Free scan completed!', 'success');
+                        displayFreeScanResults(result);
+                    } else {
+                        showStatus('Scan failed: ' + result.error, 'error');
+                    }
+                } else {
+                    // Use VirusTotal
+                    const apiKey = document.getElementById('vtApiKey').value.trim();
+                    const waitForResult = document.getElementById('vtWaitForResult').checked;
+                    
+                    const requestBody = {
+                        file_path: filePath,
+                        wait_for_result: waitForResult,
+                        max_wait: 300
+                    };
+
+                    if (apiKey) {
+                        requestBody.api_key = apiKey;
+                    }
+
+                    const response = await fetch('/api/virustotal/scan', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    result = await response.json();
+
+                    if (result.success) {
+                        showStatus('VirusTotal scan completed!', 'success');
+                        displayVirusTotalResults(result);
+                    } else {
+                        showStatus('VirusTotal scan failed: ' + result.error, 'error');
+                    }
+                }
+
+            } catch (error) {
+                showStatus('Scan request failed: ' + error.message, 'error');
+            } finally {
+                scanBtn.disabled = false;
+                scanBtn.textContent = 'SCAN FILE';
+            }
+        }
+
+        async function checkHashOnly() {
+            const filePath = document.getElementById('vtFilePath').value.trim();
+            const serviceType = document.querySelector('input[name="scanService"]:checked')?.value || 'free';
+
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+
+            showStatus('Checking file hash...', 'analyzing');
+            clearResults();
+
+            try {
+                if (serviceType === 'free') {
+                    // Free scanner always checks hash
+                    const response = await fetch('/api/malware-scan/free', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ file_path: filePath })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        showStatus('Hash check completed!', 'success');
+                        displayFreeScanResults(result);
+                    } else {
+                        showStatus('Hash check failed: ' + result.error, 'error');
+                    }
+                } else {
+                    // VirusTotal hash check
+                    await virusTotalCheckHash();
+                }
+            } catch (error) {
+                showStatus('Hash check failed: ' + error.message, 'error');
+            }
+        }
+
+        function displayFreeScanResults(data) {
+            const resultsEl = document.getElementById('results');
+            const summary = data.summary;
+
+            let threatColor = '#28a745'; // Green
+            if (summary.threat_level === 'HIGH') threatColor = '#dc3545';
+            else if (summary.threat_level === 'MEDIUM') threatColor = '#fd7e14';
+            else if (summary.threat_level === 'LOW') threatColor = '#ffc107';
+
+            let html = '<div class="results-section" style="border: 3px solid ' + threatColor + ';"><h3 style="color: ' + threatColor + ';">🛡️ FREE MALWARE SCAN RESULTS</h3>';
+
+            html += '<div class="results-grid" style="margin-bottom: 20px;"><div class="metric" style="border-color: ' + threatColor + ';"><div class="metric-value" style="color: ' + threatColor + ';">' + summary.threat_level + '</div><div class="metric-label">THREAT LEVEL</div></div><div class="metric"><div class="metric-value">' + summary.detection_count + '</div><div class="metric-label">Detections</div></div><div class="metric"><div class="metric-value">' + summary.services_checked + '</div><div class="metric-label">Services Checked</div></div></div>';
+
+            html += '<div class="log-output" style="margin-bottom: 20px;">' +
+                '<strong>File Information:</strong><br>' +
+                'Name: ' + data.file_name + '<br>' +
+                'Size: ' + (data.file_size / 1024).toFixed(2) + ' KB<br>' +
+                '<br><strong>File Hashes:</strong><br>' +
+                'SHA256: ' + data.hashes.sha256 + '<br>' +
+                'SHA1: ' + data.hashes.sha1 + '<br>' +
+                'MD5: ' + data.hashes.md5 + '<br>' +
+                '<br><strong>Scan Information:</strong><br>' +
+                'Services: MalwareBazaar, ThreatFox, VirusTotal Public<br>' +
+                'API Key Required: No<br>' +
+                'Rate Limits: None<br>' +
+                'Scan Time: ' + data.scan_timestamp + '<br>' +
+                '</div>';
+
+            if (summary.detections && summary.detections.length > 0) {
+                html += '<div style="margin-top: 20px;"><h4 style="color: #dc3545; border-bottom: 2px solid #dc3545; padding-bottom: 8px;">🚨 MALWARE DETECTED (' + summary.detections.length + ')</h4><div class="log-output">';
+                summary.detections.forEach(function(det) {
+                    html += '<div style="margin: 5px 0; padding: 5px; background: #fff5f5; border-left: 3px solid #dc3545;"><strong>' + det.service + ':</strong> ' + det.malware_family + ' <span style="color: #666; font-size: 11px;">(' + det.threat_type + ')</span></div>';
+                });
+                html += '</div></div>';
+            }
+
+            // Detailed service results
+            html += '<div style="margin-top: 20px;"><h4 style="border-bottom: 2px solid #333; padding-bottom: 8px;">📋 DETAILED SERVICE RESULTS</h4><div class="log-output">';
+            
+            for (const [serviceName, serviceResult] of Object.entries(data.results)) {
+                const serviceTitle = serviceResult.service || serviceName;
+                if (serviceResult.error) {
+                    html += '<strong>' + serviceTitle + ':</strong> ❌ ' + serviceResult.error + '<br><br>';
+                } else if (serviceResult.found) {
+                    html += '<strong>' + serviceTitle + ':</strong> ⚠️ FOUND<br>';
+                    if (serviceResult.malware_family) html += '  Malware Family: ' + serviceResult.malware_family + '<br>';
+                    if (serviceResult.threat_type) html += '  Threat Type: ' + serviceResult.threat_type + '<br>';
+                    if (serviceResult.threat_level) html += '  Threat Level: ' + serviceResult.threat_level + '<br>';
+                    if (serviceResult.detection_rate) html += '  Detection Rate: ' + serviceResult.detection_rate + '%<br>';
+                    if (serviceResult.malicious_count && serviceResult.total_engines) {
+                        html += '  Detections: ' + serviceResult.malicious_count + '/' + serviceResult.total_engines + '<br>';
+                    }
+                    if (serviceResult.file_type) html += '  File Type: ' + serviceResult.file_type + '<br>';
+                    if (serviceResult.first_seen) html += '  First Seen: ' + serviceResult.first_seen + '<br>';
+                    if (serviceResult.tags && serviceResult.tags.length > 0) html += '  Tags: ' + serviceResult.tags.join(', ') + '<br>';
+                    if (serviceResult.note) html += '  Note: ' + serviceResult.note + '<br>';
+                    html += '<br>';
+                } else {
+                    const note = serviceResult.note ? ' (' + serviceResult.note + ')' : '';
+                    html += '<strong>' + serviceTitle + ':</strong> ✅ Clean (not found in database)' + note + '<br><br>';
+                }
+            }
+            
+            html += '</div></div>';
+
+            html += '</div>';
+
+            resultsEl.innerHTML = html;
+            resultsEl.style.display = 'block';
+            resultsEl.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        async function virusTotalScan() {
+            const filePath = document.getElementById('vtFilePath').value.trim();
+            const apiKey = document.getElementById('vtApiKey').value.trim();
+            const waitForResult = document.getElementById('vtWaitForResult').checked;
+            const scanBtn = document.getElementById('vtScanBtn');
+
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+
+            scanBtn.disabled = true;
+            scanBtn.textContent = waitForResult ? 'SCANNING... (This may take 2-5 minutes)' : 'UPLOADING...';
+            showStatus('Initiating VirusTotal scan...', 'analyzing');
+            clearResults();
+
+            try {
+                const requestBody = {
+                    file_path: filePath,
+                    wait_for_result: waitForResult,
+                    max_wait: 300
+                };
+
+                if (apiKey) {
+                    requestBody.api_key = apiKey;
+                }
+
+                const response = await fetch('/api/virustotal/scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus('VirusTotal scan completed!', 'success');
+                    displayVirusTotalResults(result);
+                } else {
+                    showStatus('VirusTotal scan failed: ' + result.error, 'error');
+                }
+
+            } catch (error) {
+                showStatus('Scan request failed: ' + error.message, 'error');
+            } finally {
+                scanBtn.disabled = false;
+                scanBtn.textContent = 'SCAN WITH VIRUSTOTAL';
+            }
+        }
+
+        async function virusTotalCheckHash() {
+            const filePath = document.getElementById('vtFilePath').value.trim();
+            const apiKey = document.getElementById('vtApiKey').value.trim();
+
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+
+            showStatus('Checking file hash in VirusTotal database...', 'analyzing');
+            clearResults();
+
+            try {
+                const requestBody = {
+                    file_path: filePath
+                };
+
+                if (apiKey) {
+                    requestBody.api_key = apiKey;
+                }
+
+                const response = await fetch('/api/virustotal/check-hash', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    if (result.found) {
+                        showStatus('File found in VirusTotal database!', 'success');
+                        displayVirusTotalResults({ ...result, scan_type: 'hash_check' });
+                    } else {
+                        showStatus('File not found in VirusTotal database', 'info');
+                        document.getElementById('results').innerHTML = '<div class="results-section"><h3>HASH CHECK RESULT</h3><div class="log-output"><strong>File Hash:</strong> ' + result.file_hash + '<strong>Status:</strong> Not found in VirusTotal database<strong>Recommendation:</strong> Upload file for scanning to get results</div></div>';
+                        document.getElementById('results').style.display = 'block';
+                    }
+                } else {
+                    showStatus('Hash check failed: ' + result.error, 'error');
+                }
+
+            } catch (error) {
+                showStatus('Hash check request failed: ' + error.message, 'error');
+            }
+        }
+
+        function displayVirusTotalResults(data) {
+            const resultsEl = document.getElementById('results');
+            const res = data.results;
+
+            if (!res) {
+                resultsEl.innerHTML = '<div class="results-section"><h3>VIRUSTOTAL SCAN STATUS</h3><div class="log-output"><strong>File:</strong> ' + (data.file_name || data.file_path) + '<strong>Status:</strong> ' + (data.message || 'Scan initiated') + '<strong>Analysis ID:</strong> ' + (data.analysis_id || 'N/A') + (data.analysis_id ? 'Check VirusTotal dashboard for results' : '') + '</div></div>';
+                resultsEl.style.display = 'block';
+                return;
+            }
+
+            let threatColor = '#28a745';
+            if (res.threat_level === 'HIGH') threatColor = '#dc3545';
+            else if (res.threat_level === 'MEDIUM') threatColor = '#fd7e14';
+            else if (res.threat_level === 'LOW') threatColor = '#ffc107';
+
+            let html = '<div class="results-section" style="border: 3px solid ' + threatColor + ';"><h3 style="color: ' + threatColor + ';">🛡️ VIRUSTOTAL SCAN RESULTS</h3><div class="results-grid" style="margin-bottom: 20px;"><div class="metric" style="border-color: ' + threatColor + ';"><div class="metric-value" style="color: ' + threatColor + ';">' + res.threat_level + '</div><div class="metric-label">THREAT LEVEL</div></div><div class="metric"><div class="metric-value">' + res.detection_rate + '%</div><div class="metric-label">Detection Rate</div></div><div class="metric"><div class="metric-value" style="color: #dc3545;">' + res.malicious_count + '</div><div class="metric-label">Malicious</div></div><div class="metric"><div class="metric-value" style="color: #ffc107;">' + res.suspicious_count + '</div><div class="metric-label">Suspicious</div></div><div class="metric"><div class="metric-value" style="color: #28a745;">' + res.clean_count + '</div><div class="metric-label">Clean</div></div><div class="metric"><div class="metric-value">' + res.total_engines + '</div><div class="metric-label">Total Engines</div></div></div>';
+
+            html += '<div class="log-output" style="margin-bottom: 20px;"><strong>File Information:</strong>Name: ' + (data.file_name || 'Unknown') + 'Size: ' + (data.file_size ? (data.file_size / 1024).toFixed(2) + ' KB' : 'Unknown') + 'Type: ' + (res.file_info && res.file_info.file_type || 'Unknown') + '<strong>Threat Classification:</strong>Primary Label: ' + (res.threat_label || 'Unknown') + 'Threat Level: ' + res.threat_level + 'Detection Rate: ' + res.detection_rate + '% (' + res.malicious_count + '/' + res.total_engines + ')<strong>File Hashes:</strong>SHA256: ' + (res.file_info && res.file_info.sha256 || 'N/A') + 'SHA1: ' + (res.file_info && res.file_info.sha1 || 'N/A') + 'MD5: ' + (res.file_info && res.file_info.md5 || 'N/A') + '<strong>Scan Information:</strong>Scan Type: ' + (data.scan_type === 'existing_report' ? 'Existing Report' : data.scan_type === 'hash_check' ? 'Hash Check' : 'New Upload') + 'Scan Date: ' + (res.scan_date ? new Date(res.scan_date * 1000).toLocaleString() : 'N/A') + 'Times Submitted: ' + (res.times_submitted || 0) + 'Reputation: ' + (res.reputation || 0) + '<strong>VirusTotal Report:</strong>' + (res.permalink || 'N/A') + '</div>';
+
+            if (res.malicious_detections && res.malicious_detections.length > 0) {
+                html += '<div style="margin-top: 20px;"><h4 style="color: #dc3545; border-bottom: 2px solid #dc3545; padding-bottom: 8px;">🚨 MALICIOUS DETECTIONS (' + res.malicious_detections.length + ')</h4><div class="log-output">';
+                res.malicious_detections.slice(0, 20).forEach(function(det) {
+                    html += '<div style="margin: 5px 0; padding: 5px; background: #fff5f5; border-left: 3px solid #dc3545;"><strong>' + det.engine + ':</strong> ' + det.result + ' <span style="color: #666; font-size: 11px;">(' + (det.method || 'unknown method') + ')</span></div>';
+                });
+                if (res.malicious_detections.length > 20) {
+                    html += '<div style="margin-top: 10px; text-align: center; color: #666;">... and ' + (res.malicious_detections.length - 20) + ' more detections</div>';
+                }
+                html += '</div></div>';
+            }
+
+            if (res.suspicious_detections && res.suspicious_detections.length > 0) {
+                html += '<div style="margin-top: 20px;"><h4 style="color: #ffc107; border-bottom: 2px solid #ffc107; padding-bottom: 8px;">⚠️ SUSPICIOUS DETECTIONS (' + res.suspicious_detections.length + ')</h4><div class="log-output">';
+                res.suspicious_detections.slice(0, 10).forEach(function(det) {
+                    html += '<div style="margin: 5px 0; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107;"><strong>' + det.engine + ':</strong> ' + (det.result || 'Suspicious') + '</div>';
+                });
+                html += '</div></div>';
+            }
+
+            html += '</div>';
+
+            resultsEl.innerHTML = html;
+            resultsEl.style.display = 'block';
+            resultsEl.scrollIntoView({ behavior: 'smooth' });
+        }
     </script>
 </body>
 </html>
