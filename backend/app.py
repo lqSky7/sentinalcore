@@ -47,6 +47,15 @@ except ImportError as e:
     print(f"Free malware scanner not available: {e}")
     free_scanner_available = False
 
+# Import static analyzer
+try:
+    from static_analyzer import StaticAnalyzer
+    static_analyzer = StaticAnalyzer()
+    static_analyzer_available = True
+except ImportError as e:
+    print(f"Static analyzer not available: {e}")
+    static_analyzer_available = False
+
 app = Flask(__name__)
 CORS(app)
 
@@ -360,28 +369,43 @@ class AnalysisEngine:
         
         # Get initial system state
         initial_processes = set(p.pid for p in psutil.process_iter())
-        initial_connections = psutil.net_connections()
-        initial_conn_count = len(initial_connections)
-        initial_conn_details = [
-            {
-                'fd': conn.fd,
-                'family': str(conn.family),
-                'type': str(conn.type),
-                'laddr': f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
-                'raddr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
-                'status': conn.status
-            }
-            for conn in initial_connections
-        ]
+        
+        # Try to get network connections (requires root on macOS)
+        try:
+            initial_connections = psutil.net_connections()
+            initial_conn_count = len(initial_connections)
+            initial_conn_details = [
+                {
+                    'fd': conn.fd,
+                    'family': str(conn.family),
+                    'type': str(conn.type),
+                    'laddr': f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
+                    'raddr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
+                    'status': conn.status
+                }
+                for conn in initial_connections
+            ]
+            network_monitoring_available = True
+        except (psutil.AccessDenied, PermissionError, OSError) as e:
+            # Network monitoring requires root on macOS
+            print(f"Network monitoring unavailable (requires root on macOS): {e}")
+            initial_connections = []
+            initial_conn_count = 0
+            initial_conn_details = []
+            network_monitoring_available = False
         
         try:
             # Start the process and monitor it
-            process = subprocess.Popen(
-                [file_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                preexec_fn=os.setsid if hasattr(os, 'setsid') else None
-            )
+            # On macOS, os.setsid fails with SIP (System Integrity Protection)
+            # Only use process groups on Linux where it works reliably
+            popen_kwargs = {
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE
+            }
+            if self.platform == 'linux' and hasattr(os, 'setsid'):
+                popen_kwargs['preexec_fn'] = os.setsid
+            
+            process = subprocess.Popen([file_path], **popen_kwargs)
             
             # Monitor the process
             child_processes = []
@@ -396,9 +420,11 @@ class AnalysisEngine:
             except:
                 start_memory = 0
             
-            # Start network monitoring thread
+            # Start network monitoring thread (only if available)
             monitoring_active = True
             def monitor_network():
+                if not network_monitoring_available:
+                    return
                 while monitoring_active:
                     try:
                         # Get all current connections
@@ -424,7 +450,10 @@ class AnalysisEngine:
                                     'raddr': conn_key[3],
                                     'status': conn_key[4]
                                 })
-                    except:
+                    except (psutil.AccessDenied, PermissionError, OSError):
+                        # Permission denied, skip network monitoring
+                        pass
+                    except Exception:
                         pass
                     time.sleep(0.1)  # Monitor every 100ms
             
@@ -435,10 +464,16 @@ class AnalysisEngine:
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
-                if hasattr(os, 'killpg'):
-                    os.killpg(os.getpgid(process.pid), 9)
-                else:
-                    process.kill()
+                # On Linux with process groups, kill the entire group
+                # On macOS or when process groups aren't used, just kill the process
+                try:
+                    if self.platform == 'linux' and hasattr(os, 'killpg'):
+                        os.killpg(os.getpgid(process.pid), 9)
+                    else:
+                        process.kill()
+                except (ProcessLookupError, PermissionError, OSError):
+                    # Process may have already exited
+                    pass
                 stdout, stderr = process.communicate()
             finally:
                 # Stop network monitoring
@@ -448,19 +483,31 @@ class AnalysisEngine:
             
             # Get final system state
             final_processes = set(p.pid for p in psutil.process_iter())
-            final_connections = psutil.net_connections()
-            final_conn_count = len(final_connections)
-            final_conn_details = [
-                {
-                    'fd': conn.fd,
-                    'family': str(conn.family),
-                    'type': str(conn.type),
-                    'laddr': f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
-                    'raddr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
-                    'status': conn.status
-                }
-                for conn in final_connections
-            ]
+            
+            # Try to get final network state (requires root on macOS)
+            if network_monitoring_available:
+                try:
+                    final_connections = psutil.net_connections()
+                    final_conn_count = len(final_connections)
+                    final_conn_details = [
+                        {
+                            'fd': conn.fd,
+                            'family': str(conn.family),
+                            'type': str(conn.type),
+                            'laddr': f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
+                            'raddr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
+                            'status': conn.status
+                        }
+                        for conn in final_connections
+                    ]
+                except (psutil.AccessDenied, PermissionError, OSError):
+                    final_connections = []
+                    final_conn_count = 0
+                    final_conn_details = []
+            else:
+                final_connections = []
+                final_conn_count = 0
+                final_conn_details = []
             
             # Detect new processes (approximate child processes)
             new_processes = final_processes - initial_processes
@@ -542,7 +589,14 @@ class AnalysisEngine:
             return results
             
         except Exception as e:
-            return {'error': f'Process analysis failed: {str(e)}', 'analysis_id': analysis_id}
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Analysis error: {error_details}")  # Log to console
+            return {
+                'error': f'Process analysis failed: {str(e)}',
+                'error_details': error_details,
+                'analysis_id': analysis_id
+            }
     
     def _simulate_syscalls_from_execution(self, file_path, stdout, stderr, return_code):
         """Simulate syscall detection based on execution characteristics"""
@@ -684,18 +738,26 @@ class AnalysisEngine:
                 # Basic execution monitoring
                 cmd = [file_path]
             
-            process = subprocess.Popen(cmd, 
-                                     stdout=subprocess.PIPE, 
-                                     stderr=subprocess.PIPE,
-                                     preexec_fn=os.setsid if hasattr(os, 'setsid') else None)
+            # Use process groups only on Linux where they work reliably
+            popen_kwargs = {
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE
+            }
+            if self.platform == 'linux' and hasattr(os, 'setsid'):
+                popen_kwargs['preexec_fn'] = os.setsid
+            
+            process = subprocess.Popen(cmd, **popen_kwargs)
             
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
-                if hasattr(os, 'killpg'):
-                    os.killpg(os.getpgid(process.pid), 9)
-                else:
-                    process.kill()
+                try:
+                    if self.platform == 'linux' and hasattr(os, 'killpg'):
+                        os.killpg(os.getpgid(process.pid), 9)
+                    else:
+                        process.kill()
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
                 stdout, stderr = process.communicate()
             
             end_time = datetime.now()
@@ -1503,6 +1565,295 @@ def malware_scan_status():
         'rate_limits': 'None (completely free)',
         'message': 'Free multi-service scanner ready' if free_scanner_available else 'Scanner not available'
     })
+
+# Static Analysis Endpoints
+@app.route('/api/static-scan', methods=['POST'])
+def static_scan():
+    """Perform comprehensive static analysis"""
+    if not static_analyzer_available:
+        return jsonify({
+            'success': False,
+            'error': 'Static analyzer not available'
+        }), 500
+    
+    data = request.get_json()
+    file_path = data.get('file_path')
+    
+    if not file_path:
+        return jsonify({
+            'success': False,
+            'error': 'file_path is required'
+        }), 400
+    
+    if not os.path.exists(file_path):
+        return jsonify({
+            'success': False,
+            'error': f'File not found: {file_path}'
+        }), 404
+    
+    try:
+        # Perform comprehensive static analysis
+        result = {
+            'file_path': file_path,
+            'timestamp': datetime.now().isoformat(),
+            'file_info': {},
+            'entropy': {},
+            'hashes': {},
+            'strings': {},
+            'risk_assessment': {}
+        }
+        
+        # Get file info
+        file_stat = os.stat(file_path)
+        result['file_info'] = {
+            'size': file_stat.st_size,
+            'extension': os.path.splitext(file_path)[1],
+            'name': os.path.basename(file_path)
+        }
+        
+        # Entropy analysis
+        entropy_result = static_analyzer.analyze_file_entropy(file_path)
+        if 'error' not in entropy_result:
+            result['entropy'] = entropy_result
+        
+        # Calculate hashes
+        result['hashes'] = static_analyzer.calculate_file_hashes(file_path)
+        
+        # Extract and analyze strings
+        strings_result = static_analyzer.extract_suspicious_strings(file_path)
+        result['strings'] = strings_result
+        
+        # Risk assessment
+        risk_score = 0
+        risk_factors = []
+        
+        if entropy_result.get('suspicion_level') == 'High':
+            risk_score += 40
+            risk_factors.append('High entropy detected')
+        elif entropy_result.get('suspicion_level') == 'Medium':
+            risk_score += 20
+            risk_factors.append('Medium entropy detected')
+        
+        if len(strings_result.get('suspicious_strings', [])) > 5:
+            risk_score += 30
+            risk_factors.append(f"{len(strings_result['suspicious_strings'])} suspicious strings found")
+        elif len(strings_result.get('suspicious_strings', [])) > 0:
+            risk_score += 15
+            risk_factors.append(f"{len(strings_result['suspicious_strings'])} suspicious strings found")
+        
+        # Determine risk level
+        if risk_score >= 60:
+            risk_level = 'High'
+        elif risk_score >= 30:
+            risk_level = 'Medium'
+        else:
+            risk_level = 'Low'
+        
+        result['risk_assessment'] = {
+            'risk_score': risk_score,
+            'risk_level': risk_level,
+            'risk_factors': risk_factors
+        }
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Static analysis failed: {str(e)}'
+        }), 500
+
+@app.route('/api/entropy-analysis', methods=['POST'])
+def entropy_analysis():
+    """Analyze file entropy"""
+    if not static_analyzer_available:
+        return jsonify({
+            'success': False,
+            'error': 'Static analyzer not available'
+        }), 500
+    
+    data = request.get_json()
+    file_path = data.get('file_path')
+    
+    if not file_path:
+        return jsonify({
+            'success': False,
+            'error': 'file_path is required'
+        }), 400
+    
+    if not os.path.exists(file_path):
+        return jsonify({
+            'success': False,
+            'error': f'File not found: {file_path}'
+        }), 404
+    
+    try:
+        result = static_analyzer.analyze_file_entropy(file_path)
+        
+        if 'error' in result:
+            return jsonify({
+                'success': False,
+                'error': result['error']
+            }), 500
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Entropy analysis failed: {str(e)}'
+        }), 500
+
+@app.route('/api/hash-lookup', methods=['POST'])
+def hash_lookup():
+    """Calculate hashes and check threat intelligence databases"""
+    if not static_analyzer_available:
+        return jsonify({
+            'success': False,
+            'error': 'Static analyzer not available'
+        }), 500
+    
+    data = request.get_json()
+    file_path = data.get('file_path')
+    
+    if not file_path:
+        return jsonify({
+            'success': False,
+            'error': 'file_path is required'
+        }), 400
+    
+    if not os.path.exists(file_path):
+        return jsonify({
+            'success': False,
+            'error': f'File not found: {file_path}'
+        }), 404
+    
+    try:
+        # Calculate hashes
+        hashes = static_analyzer.calculate_file_hashes(file_path)
+        
+        result = {
+            'file_path': file_path,
+            'hashes': hashes,
+            'virustotal': {'found': False},
+            'malware_bazaar': {'found': False}
+        }
+        
+        # Check MalwareBazaar (free, no API key needed)
+        try:
+            mb_result = static_analyzer.check_malware_bazaar(hashes['sha256'])
+            if mb_result and 'error' not in mb_result:
+                result['malware_bazaar'] = mb_result
+        except Exception as e:
+            result['malware_bazaar'] = {'error': str(e)}
+        
+        # Check VirusTotal if API key is available
+        if static_analyzer.virustotal_api_key:
+            try:
+                vt_result = static_analyzer.check_virustotal(hashes['sha256'])
+                if vt_result and 'error' not in vt_result:
+                    result['virustotal'] = vt_result
+            except Exception as e:
+                result['virustotal'] = {'error': str(e)}
+        else:
+            result['virustotal'] = {'error': 'API key not configured'}
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Hash lookup failed: {str(e)}'
+        }), 500
+
+@app.route('/api/directory-scan', methods=['POST'])
+def directory_scan():
+    """Scan directory for suspicious files"""
+    if not static_analyzer_available:
+        return jsonify({
+            'success': False,
+            'error': 'Static analyzer not available'
+        }), 500
+    
+    data = request.get_json()
+    directory_path = data.get('directory_path')
+    recursive = data.get('recursive', False)
+    
+    if not directory_path:
+        return jsonify({
+            'success': False,
+            'error': 'directory_path is required'
+        }), 400
+    
+    if not os.path.exists(directory_path) or not os.path.isdir(directory_path):
+        return jsonify({
+            'success': False,
+            'error': f'Directory not found: {directory_path}'
+        }), 404
+    
+    try:
+        results = []
+        file_count = 0
+        
+        # Scan directory
+        if recursive:
+            for root, dirs, files in os.walk(directory_path):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    try:
+                        entropy_result = static_analyzer.analyze_file_entropy(file_path)
+                        if 'error' not in entropy_result:
+                            results.append(entropy_result)
+                            file_count += 1
+                            if file_count >= 100:  # Limit to prevent timeout
+                                break
+                    except:
+                        pass
+                if file_count >= 100:
+                    break
+        else:
+            for filename in os.listdir(directory_path):
+                file_path = os.path.join(directory_path, filename)
+                if os.path.isfile(file_path):
+                    try:
+                        entropy_result = static_analyzer.analyze_file_entropy(file_path)
+                        if 'error' not in entropy_result:
+                            results.append(entropy_result)
+                            file_count += 1
+                            if file_count >= 100:
+                                break
+                    except:
+                        pass
+        
+        # Summary
+        high_risk = [r for r in results if r.get('suspicion_level') == 'High']
+        medium_risk = [r for r in results if r.get('suspicion_level') == 'Medium']
+        low_risk = [r for r in results if r.get('suspicion_level') == 'Low']
+        
+        summary = {
+            'total_files': len(results),
+            'high_risk': len(high_risk),
+            'medium_risk': len(medium_risk),
+            'low_risk': len(low_risk),
+            'detection_rate': f"{((len(high_risk) + len(medium_risk)) / len(results) * 100):.1f}%" if results else "0%"
+        }
+        
+        return jsonify({
+            'directory': directory_path,
+            'recursive': recursive,
+            'scan_timestamp': datetime.now().isoformat(),
+            'total_files': len(results),
+            'summary': summary,
+            'results': results,
+            'high_risk_files': high_risk[:10]  # Top 10
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Directory scan failed: {str(e)}'
+        }), 500
+    
 
 if __name__ == '__main__':
     # Ensure monitor is compiled

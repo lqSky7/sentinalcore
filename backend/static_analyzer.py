@@ -123,6 +123,14 @@ class StaticAnalyzer:
         except Exception as e:
             return {'error': f'Hash calculation failed: {str(e)}'}
     
+    def calculate_file_hashes(self, file_path):
+        """Alias for get_file_hash for consistency"""
+        return self.get_file_hash(file_path)
+    
+    def extract_suspicious_strings(self, file_path, min_length=4):
+        """Extract and identify suspicious strings from file"""
+        return self.extract_strings(file_path, min_length)
+    
     def check_virustotal(self, file_hash):
         """Check file hash against VirusTotal"""
         if not self.virustotal_api_key:

@@ -1992,58 +1992,6 @@
             resultsEl.scrollIntoView({ behavior: 'smooth' });
         }
 
-        async function virusTotalScan() {
-            const filePath = document.getElementById('vtFilePath').value.trim();
-            const apiKey = document.getElementById('vtApiKey').value.trim();
-            const waitForResult = document.getElementById('vtWaitForResult').checked;
-            const scanBtn = document.getElementById('vtScanBtn');
-
-            if (!filePath) {
-                alert('Please enter a file path');
-                return;
-            }
-
-            scanBtn.disabled = true;
-            scanBtn.textContent = waitForResult ? 'SCANNING... (This may take 2-5 minutes)' : 'UPLOADING...';
-            showStatus('Initiating VirusTotal scan...', 'analyzing');
-            clearResults();
-
-            try {
-                const requestBody = {
-                    file_path: filePath,
-                    wait_for_result: waitForResult,
-                    max_wait: 300
-                };
-
-                if (apiKey) {
-                    requestBody.api_key = apiKey;
-                }
-
-                const response = await fetch('/api/virustotal/scan', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(requestBody)
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    showStatus('VirusTotal scan completed!', 'success');
-                    displayVirusTotalResults(result);
-                } else {
-                    showStatus('VirusTotal scan failed: ' + result.error, 'error');
-                }
-
-            } catch (error) {
-                showStatus('Scan request failed: ' + error.message, 'error');
-            } finally {
-                scanBtn.disabled = false;
-                scanBtn.textContent = 'SCAN WITH VIRUSTOTAL';
-            }
-        }
-
         async function virusTotalCheckHash() {
             const filePath = document.getElementById('vtFilePath').value.trim();
             const apiKey = document.getElementById('vtApiKey').value.trim();
