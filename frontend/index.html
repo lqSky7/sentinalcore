@@ -1806,6 +1806,13 @@
                         aiResults.textContent = `AI Analysis Error: ${result.ai_analysis.error}`;
                         aiStatus.textContent = 'Analysis failed';
                     } else {
+                        // Persist AI analysis in the in-memory analysis payload so saved
+                        // records and PDF exports include it.
+                        window.currentAnalysisData = {
+                            ...window.currentAnalysisData,
+                            ai_analysis: result.ai_analysis
+                        };
+
                         // Display AI analysis results with markdown formatting
                         displayAIAnalysis(result.ai_analysis);
                         aiStatus.textContent = `Analysis completed (${result.ai_analysis.model || 'Gemini'})`;

@@ -9,7 +9,6 @@ import random
 import psutil
 import socket
 import platform
-import textwrap
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
@@ -197,6 +196,132 @@ class AnalysisEngine:
             }
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return {}
+
+    @staticmethod
+    def _format_socket_address(address):
+        """Normalize psutil socket address tuples to ip:port strings."""
+        if not address:
+            return None
+
+        if hasattr(address, 'ip') and hasattr(address, 'port'):
+            return f"{address.ip}:{address.port}"
+
+        if isinstance(address, (tuple, list)) and len(address) >= 2:
+            return f"{address[0]}:{address[1]}"
+
+        return str(address)
+
+    @staticmethod
+    def _extract_ip(address):
+        """Extract an IP portion from ip:port or [ipv6]:port formatted strings."""
+        if not address:
+            return None
+
+        if address.startswith('[') and ']:' in address:
+            end = address.rfind(']:')
+            if end > 1:
+                return address[1:end]
+
+        if ':' in address:
+            return address.rsplit(':', 1)[0]
+
+        return address
+
+    def _resolve_remote_host(self, remote_addr):
+        """Use the IP as a stable hostname fallback for dashboard rendering."""
+        return self._extract_ip(remote_addr)
+
+    def _normalize_connection_record(self, connection):
+        """Provide both legacy and frontend-friendly address keys."""
+        local_addr = connection.get('local_addr') or connection.get('laddr')
+        remote_addr = connection.get('remote_addr') or connection.get('raddr')
+        remote_host = connection.get('remote_host') or self._resolve_remote_host(remote_addr)
+
+        normalized = dict(connection)
+        normalized.update({
+            'local_addr': local_addr,
+            'remote_addr': remote_addr,
+            'laddr': local_addr,
+            'raddr': remote_addr,
+            'remote_host': remote_host
+        })
+        return normalized
+
+    def _analyze_network_requests(self, connections, stdout_text='', stderr_text=''):
+        """Build a simple request list from observed connections and output hints."""
+        requests = []
+        seen = set()
+
+        for conn in connections:
+            remote_addr = conn.get('remote_addr')
+            if not remote_addr:
+                continue
+
+            req_key = (
+                conn.get('pid'),
+                conn.get('type'),
+                remote_addr,
+                conn.get('status')
+            )
+            if req_key in seen:
+                continue
+            seen.add(req_key)
+
+            requests.append({
+                'timestamp': conn.get('timestamp', time.time()),
+                'type': 'connection',
+                'pid': conn.get('pid'),
+                'protocol': conn.get('type', 'unknown'),
+                'destination': remote_addr,
+                'hostname': conn.get('remote_host') or self._resolve_remote_host(remote_addr) or 'unknown',
+                'status': conn.get('status', 'unknown'),
+                'description': f"{conn.get('family', 'unknown')}/{conn.get('type', 'unknown')} connection observed"
+            })
+
+        output_text = f"{stdout_text}\n{stderr_text}"
+        for url in set(re.findall(r'https?://[^\s\'\"<>]+', output_text, flags=re.IGNORECASE)):
+            requests.append({
+                'timestamp': time.time(),
+                'type': 'http_request',
+                'pid': None,
+                'protocol': 'http',
+                'destination': url,
+                'hostname': 'from_output',
+                'status': 'detected',
+                'description': f"URL reference detected in process output: {url}"
+            })
+
+        return requests
+
+    def _build_network_analysis(self, network_details, stdout_text='', stderr_text=''):
+        """Build the frontend network payload from captured connection details."""
+        monitored = [
+            self._normalize_connection_record(conn)
+            for conn in (network_details.get('new_connections') or network_details.get('monitored_connections') or [])
+        ]
+
+        unique_destinations = sorted(
+            set(conn.get('remote_addr') for conn in monitored if conn.get('remote_addr'))
+        )
+        protocols_used = sorted(
+            set(conn.get('type') for conn in monitored if conn.get('type'))
+        )
+        remote_hosts = sorted(
+            set(conn.get('remote_host') for conn in monitored if conn.get('remote_host'))
+        )
+
+        return {
+            'total_connections': len(monitored),
+            'unique_destinations': len(unique_destinations),
+            'connection_change': network_details.get('change', 0),
+            'initial_count': network_details.get('initial_count', 0),
+            'final_count': network_details.get('final_count', 0),
+            'total_monitored': network_details.get('total_monitored', len(monitored)),
+            'monitored_connections': monitored,
+            'network_requests': self._analyze_network_requests(monitored, stdout_text, stderr_text),
+            'protocols_used': protocols_used,
+            'remote_hosts': remote_hosts
+        }
     
     def analyze_syscalls(self, syscalls):
         """Analyze system calls for suspicious patterns"""
@@ -426,36 +551,57 @@ class AnalysisEngine:
             
             # Start network monitoring thread (only if available)
             monitoring_active = True
+            target_pids = {process.pid}
+            seen_connections = set()
             def monitor_network():
-                if not network_monitoring_available:
-                    return
                 while monitoring_active:
                     try:
-                        # Get all current connections
-                        current_connections = psutil.net_connections()
-                        for conn in current_connections:
-                            # Check if this connection is new
-                            conn_key = (
-                                conn.family.name if hasattr(conn.family, 'name') else str(conn.family),
-                                conn.type.name if hasattr(conn.type, 'name') else str(conn.type),
-                                f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else None,
-                                f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else None,
-                                conn.status
-                            )
-                            
-                            # Add to monitored connections if not already present
-                            if conn_key not in [c['key'] for c in monitored_connections]:
+                        # Track current child processes of the target process.
+                        for proc_snapshot in psutil.process_iter(['pid', 'ppid']):
+                            proc_pid = proc_snapshot.info.get('pid')
+                            proc_ppid = proc_snapshot.info.get('ppid')
+                            if proc_pid and proc_ppid in target_pids:
+                                target_pids.add(proc_pid)
+
+                        for tracked_pid in list(target_pids):
+                            try:
+                                tracked_proc = psutil.Process(tracked_pid)
+                                try:
+                                    proc_connections = tracked_proc.connections(kind='inet')
+                                except TypeError:
+                                    proc_connections = tracked_proc.connections()
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue
+
+                            for conn in proc_connections:
+                                local_addr = self._format_socket_address(conn.laddr)
+                                remote_addr = self._format_socket_address(conn.raddr)
+                                if not local_addr and not remote_addr:
+                                    continue
+
+                                family = conn.family.name if hasattr(conn.family, 'name') else str(conn.family)
+                                conn_type = conn.type.name if hasattr(conn.type, 'name') else str(conn.type)
+                                status = conn.status if hasattr(conn, 'status') else 'unknown'
+
+                                conn_key = (tracked_pid, family, conn_type, local_addr, remote_addr, status)
+                                if conn_key in seen_connections:
+                                    continue
+                                seen_connections.add(conn_key)
+
                                 monitored_connections.append({
                                     'key': conn_key,
                                     'timestamp': time.time(),
-                                    'family': conn_key[0],
-                                    'type': conn_key[1],
-                                    'laddr': conn_key[2],
-                                    'raddr': conn_key[3],
-                                    'status': conn_key[4]
+                                    'pid': tracked_pid,
+                                    'family': family,
+                                    'type': conn_type,
+                                    'local_addr': local_addr,
+                                    'remote_addr': remote_addr,
+                                    'laddr': local_addr,
+                                    'raddr': remote_addr,
+                                    'status': status,
+                                    'remote_host': self._resolve_remote_host(remote_addr)
                                 })
                     except (psutil.AccessDenied, PermissionError, OSError):
-                        # Permission denied, skip network monitoring
                         pass
                     except Exception:
                         pass
@@ -533,7 +679,13 @@ class AnalysisEngine:
             )
             
             for conn in monitored_connections:
-                conn_tuple = (conn['family'], conn['type'], conn['laddr'], conn['raddr'], conn['status'])
+                conn_tuple = (
+                    conn.get('family'),
+                    conn.get('type'),
+                    conn.get('local_addr') or conn.get('laddr'),
+                    conn.get('remote_addr') or conn.get('raddr'),
+                    conn.get('status')
+                )
                 if conn_tuple not in initial_keys:
                     new_connections.append(conn)
             
@@ -545,8 +697,13 @@ class AnalysisEngine:
                 'final_connections': final_conn_details,
                 'monitored_connections': monitored_connections,
                 'new_connections': new_connections,
-                'total_monitored': len(monitored_connections)
+                'total_monitored': len(monitored_connections),
+                'monitoring_available': network_monitoring_available
             }
+
+            stdout_text = stdout.decode('utf-8', errors='replace')
+            stderr_text = stderr.decode('utf-8', errors='replace')
+            network_analysis = self._build_network_analysis(network_details, stdout_text, stderr_text)
             
             # Build results
             results = {
@@ -558,8 +715,8 @@ class AnalysisEngine:
                 'platform': f"{self.platform}_{self.architecture}",
                 'monitoring_method': 'process_monitoring',
                 'monitor_output': {
-                    'stdout': stdout.decode('utf-8', errors='replace'),
-                    'stderr': stderr.decode('utf-8', errors='replace'),
+                    'stdout': stdout_text,
+                    'stderr': stderr_text,
                     'return_code': process.returncode
                 },
                 'syscalls': syscalls[:100],
@@ -582,6 +739,7 @@ class AnalysisEngine:
                     'roots': [process.pid]
                 },
                 'network_connections': network_details,
+                'network_analysis': network_analysis,
                 'memory_usage': {'start': start_memory, 'process_pid': process.pid},
                 'total_syscalls': len(syscalls),
                 'total_processes': 1 + len(new_processes),
@@ -772,6 +930,19 @@ class AnalysisEngine:
                 syscalls = self._parse_strace_output(f'/tmp/strace_{analysis_id}.log')
             
             # Basic analysis without detailed monitoring
+            stdout_text = stdout.decode('utf-8', errors='replace')
+            stderr_text = stderr.decode('utf-8', errors='replace')
+            network_details = {
+                'initial_count': 0,
+                'final_count': 0,
+                'change': 0,
+                'initial_connections': [],
+                'final_connections': [],
+                'monitored_connections': [],
+                'new_connections': [],
+                'total_monitored': 0,
+                'monitoring_available': False
+            }
             results = {
                 'analysis_id': analysis_id,
                 'file_path': file_path,
@@ -781,8 +952,8 @@ class AnalysisEngine:
                 'platform': f"{self.platform}_{self.architecture}",
                 'monitoring_method': 'strace' if self.has_strace else 'basic',
                 'monitor_output': {
-                    'stdout': stdout.decode('utf-8', errors='replace'),
-                    'stderr': stderr.decode('utf-8', errors='replace')
+                    'stdout': stdout_text,
+                    'stderr': stderr_text
                 },
                 'syscalls': syscalls[:100],  # Limit for frontend
                 'syscall_analysis': self._basic_syscall_analysis(syscalls),
@@ -803,7 +974,8 @@ class AnalysisEngine:
                     }},
                     'roots': [process.pid]
                 },
-                'network_connections': {},
+                'network_connections': network_details,
+                'network_analysis': self._build_network_analysis(network_details, stdout_text, stderr_text),
                 'memory_usage': {},
                 'total_syscalls': len(syscalls),
                 'total_processes': 1
@@ -1528,45 +1700,100 @@ def _pdf_escape_text(text):
     return ''.join(ch if 32 <= ord(ch) <= 126 else '?' for ch in text)
 
 
+def _split_pdf_lines(line, max_chars=100):
+    if line is None:
+        return ['']
+
+    text = str(line).replace('\r', '')
+    if text == '':
+        return ['']
+
+    output = []
+    for part in text.split('\n'):
+        if part == '':
+            output.append('')
+            continue
+        while len(part) > max_chars:
+            output.append(part[:max_chars])
+            part = part[max_chars:]
+        output.append(part)
+    return output or ['']
+
+
+def _to_json_lines(value):
+    try:
+        payload = json.dumps(value, indent=2, default=str, ensure_ascii=True)
+    except (TypeError, ValueError):
+        payload = str(value)
+    return payload.splitlines()
+
+
 def _build_simple_pdf(lines):
-    trimmed = [line[:110] for line in lines if line is not None]
-    if not trimmed:
-        trimmed = ['No report data available']
-    trimmed = trimmed[:60]
+    normalized_lines = []
+    for line in lines:
+        normalized_lines.extend(_split_pdf_lines(line, max_chars=100))
 
-    stream_lines = ['BT', '/F1 10 Tf', '50 760 Td']
-    for index, line in enumerate(trimmed):
-        if index > 0:
-            stream_lines.append('0 -14 Td')
-        stream_lines.append(f"({_pdf_escape_text(line)}) Tj")
-    stream_lines.append('ET')
+    if not normalized_lines:
+        normalized_lines = ['No report data available']
 
-    content_stream = '\n'.join(stream_lines) + '\n'
-    content_bytes = content_stream.encode('latin-1', errors='replace')
+    lines_per_page = 45
+    pages = [
+        normalized_lines[index:index + lines_per_page]
+        for index in range(0, len(normalized_lines), lines_per_page)
+    ] or [['No report data available']]
 
-    objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>",
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        f"<< /Length {len(content_bytes)} >>\nstream\n{content_stream}endstream"
-    ]
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"
+    }
+
+    next_id = 4
+    page_refs = []
+    total_pages = len(pages)
+
+    for page_number, page_lines in enumerate(pages, start=1):
+        page_id = next_id
+        content_id = next_id + 1
+        next_id += 2
+        page_refs.append(f"{page_id} 0 R")
+
+        stream_lines = ['BT', '/F1 10 Tf', '50 760 Td']
+        for index, line in enumerate(page_lines):
+            if index > 0:
+                stream_lines.append('0 -14 Td')
+            stream_lines.append(f"({_pdf_escape_text(line)}) Tj")
+        stream_lines.append('0 -20 Td')
+        stream_lines.append(f"({_pdf_escape_text(f'Page {page_number} of {total_pages}')}) Tj")
+        stream_lines.append('ET')
+
+        content_stream = '\n'.join(stream_lines) + '\n'
+        content_bytes = content_stream.encode('latin-1', errors='replace')
+
+        objects[page_id] = (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>"
+        )
+        objects[content_id] = f"<< /Length {len(content_bytes)} >>\nstream\n{content_stream}endstream"
+
+    objects[2] = f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_refs)} >>"
+    max_obj_id = max(objects)
 
     pdf = bytearray(b"%PDF-1.4\n")
     offsets = [0]
 
-    for idx, obj in enumerate(objects, start=1):
+    for idx in range(1, max_obj_id + 1):
+        obj = objects[idx]
         offsets.append(len(pdf))
         pdf.extend(f"{idx} 0 obj\n{obj}\nendobj\n".encode('latin-1', errors='replace'))
 
     xref_start = len(pdf)
-    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode('latin-1'))
+    pdf.extend(f"xref\n0 {max_obj_id + 1}\n".encode('latin-1'))
     pdf.extend(b"0000000000 65535 f \n")
     for offset in offsets[1:]:
         pdf.extend(f"{offset:010d} 00000 n \n".encode('latin-1'))
 
     trailer = (
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"trailer\n<< /Size {max_obj_id + 1} /Root 1 0 R >>\n"
         f"startxref\n{xref_start}\n%%EOF\n"
     )
     pdf.extend(trailer.encode('latin-1'))
@@ -1577,47 +1804,58 @@ def _analysis_record_to_pdf_lines(record):
     summary = record.get('summary', {})
     analysis_data = record.get('analysis_data', {})
     monitor_output = analysis_data.get('monitor_output', {})
-    suspicious_patterns = analysis_data.get('syscall_analysis', {}).get('suspicious_patterns', [])
+    ai_analysis = analysis_data.get('ai_analysis')
 
-    lines = [
-        "Sentinal Core Malware Analysis Report",
-        "",
-        f"Title: {record.get('title', 'N/A')}",
-        f"Record ID: {record.get('id', 'N/A')}",
-        f"Saved By: {record.get('owner_user_id', 'N/A')}",
-        f"Saved At: {record.get('created_at', 'N/A')}",
-        "",
-        "Summary",
-        f"File Path: {summary.get('file_path', 'N/A')}",
-        f"Risk Level: {summary.get('risk_level', 'Unknown')}",
-        f"Duration: {summary.get('duration', 'N/A')} seconds",
-        f"Total Syscalls: {summary.get('total_syscalls', 0)}",
-        f"Total Processes: {summary.get('total_processes', 0)}",
-        ""
-    ]
+    lines = []
+    lines.append("Sentinal Core Malware Analysis Report")
+    lines.append("=" * 78)
+    lines.append(f"Generated At: {datetime.now().isoformat()}")
+    lines.append("")
+    lines.append("Record Metadata")
+    lines.append("-" * 78)
+    lines.append(f"Title: {record.get('title', 'N/A')}")
+    lines.append(f"Record ID: {record.get('id', 'N/A')}")
+    lines.append(f"Saved By: {record.get('owner_user_id', 'N/A')}")
+    lines.append(f"Saved At: {record.get('created_at', 'N/A')}")
+    lines.append(f"Source Analysis ID: {record.get('source_analysis_id', 'N/A')}")
+    lines.append("")
+    lines.append("Summary")
+    lines.append("-" * 78)
+    lines.append(f"File Path: {summary.get('file_path', 'N/A')}")
+    lines.append(f"Risk Level: {summary.get('risk_level', 'Unknown')}")
+    lines.append(f"Duration: {summary.get('duration', 'N/A')} seconds")
+    lines.append(f"Total Syscalls: {summary.get('total_syscalls', 0)}")
+    lines.append(f"Total Processes: {summary.get('total_processes', 0)}")
+    lines.append("")
+    lines.append("Execution Output (Full)")
+    lines.append("-" * 78)
+    lines.append("STDOUT:")
+    lines.extend((monitor_output.get('stdout') or '').splitlines() or [''])
+    lines.append("")
+    lines.append("STDERR:")
+    lines.extend((monitor_output.get('stderr') or '').splitlines() or [''])
+    lines.append("")
 
-    if suspicious_patterns:
-        lines.append("Suspicious Patterns")
-        for pattern in suspicious_patterns[:10]:
-            for wrapped in textwrap.wrap(f"- {pattern}", width=100):
-                lines.append(wrapped)
-        lines.append("")
+    lines.append("AI Analysis")
+    lines.append("-" * 78)
+    if ai_analysis is None:
+        lines.append("No AI analysis was attached to this saved record.")
+    elif isinstance(ai_analysis, dict):
+        if ai_analysis.get('analysis'):
+            lines.append("AI Narrative:")
+            lines.extend(str(ai_analysis.get('analysis', '')).splitlines())
+            lines.append("")
+        lines.append("AI Payload:")
+        lines.extend(_to_json_lines(ai_analysis))
+    else:
+        lines.extend(str(ai_analysis).splitlines() or [str(ai_analysis)])
+    lines.append("")
 
-    stdout = monitor_output.get('stdout') or ''
-    stderr = monitor_output.get('stderr') or ''
-
-    if stdout:
-        lines.append("STDOUT (excerpt)")
-        for wrapped in textwrap.wrap(stdout[:500], width=100):
-            lines.append(wrapped)
-        lines.append("")
-
-    if stderr:
-        lines.append("STDERR (excerpt)")
-        for wrapped in textwrap.wrap(stderr[:500], width=100):
-            lines.append(wrapped)
-        lines.append("")
-
+    # Include the full saved analysis payload to guarantee all details are exported.
+    lines.append("Full Saved Analysis Record (JSON)")
+    lines.append("-" * 78)
+    lines.extend(_to_json_lines(record))
+    lines.append("")
     lines.append("End of report")
     return lines
 
