@@ -1266,8 +1266,8 @@
             // Display system calls
             displaySyscalls(data.syscalls || []);
 
-            // Display network analysis
-            displayNetworkAnalysis(data.network_analysis);
+            // Display network analysis (with fallback for legacy backend payloads)
+            displayNetworkAnalysis(data.network_analysis, data.network_connections);
 
             // Display execution output
             displayExecutionOutput(data.monitor_output);
@@ -1376,17 +1376,61 @@
             outputEl.textContent = displayText || 'No output captured';
         }
 
-        function displayNetworkAnalysis(networkData) {
+        function displayNetworkAnalysis(networkData, legacyNetworkConnections) {
+            const legacyConnections = legacyNetworkConnections?.new_connections?.length
+                ? legacyNetworkConnections.new_connections
+                : (legacyNetworkConnections?.monitored_connections || []);
+
+            const normalizedConnections = ((networkData?.monitored_connections?.length
+                ? networkData.monitored_connections
+                : legacyConnections) || []).map(conn => {
+                const remoteAddr = conn.remote_addr || conn.raddr || null;
+                const localAddr = conn.local_addr || conn.laddr || null;
+                const remoteHost = conn.remote_host || (remoteAddr ? remoteAddr.split(':')[0] : null);
+
+                return {
+                    ...conn,
+                    remote_addr: remoteAddr,
+                    local_addr: localAddr,
+                    remote_host: remoteHost
+                };
+            });
+
+            const protocolsUsed = (networkData?.protocols_used?.length
+                ? networkData.protocols_used
+                : [...new Set(normalizedConnections.map(conn => conn.type).filter(Boolean))]);
+            const uniqueDestinations = networkData?.unique_destinations ?? new Set(
+                normalizedConnections.map(conn => conn.remote_addr).filter(Boolean)
+            ).size;
+            const totalConnections = networkData?.total_connections ?? normalizedConnections.length;
+            const remoteHosts = (networkData?.remote_hosts?.length
+                ? networkData.remote_hosts
+                : [...new Set(normalizedConnections.map(conn => conn.remote_host).filter(Boolean))]);
+            const networkRequests = (networkData?.network_requests?.length
+                ? networkData.network_requests
+                : normalizedConnections
+                    .filter(conn => conn.remote_addr)
+                    .map(conn => ({
+                        timestamp: conn.timestamp || Date.now() / 1000,
+                        type: 'connection',
+                        pid: conn.pid,
+                        protocol: conn.type || 'unknown',
+                        destination: conn.remote_addr,
+                        hostname: conn.remote_host || 'Unresolved',
+                        status: conn.status || 'unknown',
+                        description: `${conn.family || 'unknown'}/${conn.type || 'unknown'} connection observed`
+                    })));
+
             // Update network metrics
-            document.getElementById('totalConnections').textContent = networkData?.total_connections || 0;
-            document.getElementById('uniqueDestinations').textContent = networkData?.unique_destinations || 0;
-            document.getElementById('networkProtocols').textContent = networkData?.protocols_used?.length || 0;
+            document.getElementById('totalConnections').textContent = totalConnections;
+            document.getElementById('uniqueDestinations').textContent = uniqueDestinations;
+            document.getElementById('networkProtocols').textContent = protocolsUsed.length;
 
             // Display network requests details
             const requestsEl = document.getElementById('networkRequestsDetails');
             const connectionsEl = document.getElementById('networkConnectionsDetails');
             
-            if (!networkData || (!networkData.network_requests && !networkData.monitored_connections)) {
+            if (!networkRequests.length && !normalizedConnections.length) {
                 requestsEl.textContent = 'No network activity detected';
                 connectionsEl.textContent = 'No connections monitored';
                 return;
@@ -1394,9 +1438,9 @@
 
             // Display network requests
             let requestsText = '';
-            if (networkData.network_requests && networkData.network_requests.length > 0) {
+            if (networkRequests.length > 0) {
                 requestsText += '=== NETWORK REQUESTS DETECTED ===\n\n';
-                networkData.network_requests.forEach((request, index) => {
+                networkRequests.forEach((request, index) => {
                     const timestamp = new Date(request.timestamp * 1000).toLocaleTimeString();
                     requestsText += `[${timestamp}] ${request.type.toUpperCase()}\n`;
                     if (request.pid) requestsText += `  Process PID: ${request.pid}\n`;
@@ -1413,15 +1457,15 @@
 
             // Display connection details
             let connectionsText = '';
-            if (networkData.monitored_connections && networkData.monitored_connections.length > 0) {
+            if (normalizedConnections.length > 0) {
                 connectionsText += '=== MONITORED CONNECTIONS ===\n\n';
-                connectionsText += `Total Connections: ${networkData.total_connections}\n`;
-                connectionsText += `Unique Destinations: ${networkData.unique_destinations}\n`;
-                connectionsText += `Protocols Used: ${networkData.protocols_used?.join(', ') || 'None'}\n`;
-                connectionsText += `Remote Hosts: ${networkData.remote_hosts?.join(', ') || 'None'}\n\n`;
+                connectionsText += `Total Connections: ${totalConnections}\n`;
+                connectionsText += `Unique Destinations: ${uniqueDestinations}\n`;
+                connectionsText += `Protocols Used: ${protocolsUsed.join(', ') || 'None'}\n`;
+                connectionsText += `Remote Hosts: ${remoteHosts.join(', ') || 'None'}\n\n`;
                 
                 connectionsText += '=== CONNECTION DETAILS ===\n\n';
-                networkData.monitored_connections.forEach((conn, index) => {
+                normalizedConnections.forEach((conn, index) => {
                     const timestamp = new Date(conn.timestamp * 1000).toLocaleTimeString();
                     connectionsText += `[${timestamp}] Connection ${index + 1}\n`;
                     if (conn.pid) connectionsText += `  Process PID: ${conn.pid}\n`;
