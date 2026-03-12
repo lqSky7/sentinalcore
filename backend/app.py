@@ -3,11 +3,15 @@ import subprocess
 import threading
 import time
 import json
+import uuid
+import io
+import random
 import psutil
 import socket
 import platform
+import textwrap
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 import csv
 import re
@@ -894,7 +898,7 @@ class AnalysisEngine:
             analysis_summary = self._prepare_analysis_summary(analysis_results)
             
             # Call Gemini API
-            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
             
             # Get file content for analysis if possible
             file_content = ""
@@ -1018,7 +1022,7 @@ Format your response clearly with headers and bullet points for easy reading.
                     ai_analysis = result['candidates'][0]['content']['parts'][0]['text']
                     return {
                         'analysis': ai_analysis,
-                        'model': 'gemini-2.5-pro',
+                        'model': 'gemini-2.5-flash',
                         'timestamp': datetime.now().isoformat()
                     }
                 else:
@@ -1052,8 +1056,585 @@ Format your response clearly with headers and bullet points for easy reading.
         }
         return summary
 
+class CollaborationStore:
+    """Minimal JSON-backed store for analysis sharing and collaboration."""
+
+    def __init__(self, relative_path='data/collab_store.json'):
+        self.storage_path = os.path.join(os.path.dirname(__file__), relative_path)
+        self._lock = threading.Lock()
+        self._ensure_store()
+        self._seed_demo_data_if_needed()
+
+    def _default_store(self):
+        return {
+            'analyses': {},
+            'groups': {},
+            'group_shares': []
+        }
+
+    def _ensure_store(self):
+        directory = os.path.dirname(self.storage_path)
+        os.makedirs(directory, exist_ok=True)
+        if not os.path.exists(self.storage_path):
+            with open(self.storage_path, 'w', encoding='utf-8') as f:
+                json.dump(self._default_store(), f, indent=2)
+
+    def _build_demo_analysis_data(self, user_id, title, file_path, risk_level, rng):
+        risk_profiles = {
+            'Low': {'syscalls': 78, 'suspicious': [], 'network': 1, 'processes': 2},
+            'Medium': {
+                'syscalls': 162,
+                'suspicious': ['Suspicious outbound connection to uncommon port'],
+                'network': 4,
+                'processes': 3
+            },
+            'High': {
+                'syscalls': 354,
+                'suspicious': [
+                    'High number of execve calls (possible process injection)',
+                    'Multiple file deletions (possible anti-forensics)'
+                ],
+                'network': 9,
+                'processes': 5
+            }
+        }
+        profile = risk_profiles.get(risk_level, risk_profiles['Medium'])
+        duration = round(rng.uniform(8.2, 47.6), 2)
+        timestamp = int(time.time()) - rng.randint(1000, 80000)
+
+        return {
+            'analysis_id': f"analysis_demo_{uuid.uuid4().hex[:8]}",
+            'file_path': file_path,
+            'duration': duration,
+            'total_syscalls': profile['syscalls'] + rng.randint(-12, 20),
+            'total_processes': profile['processes'],
+            'syscalls': [
+                {'timestamp': timestamp + 1, 'pid': 4412, 'name': 'execve', 'args': []},
+                {'timestamp': timestamp + 2, 'pid': 4412, 'name': 'openat', 'args': []},
+                {'timestamp': timestamp + 3, 'pid': 4412, 'name': 'read', 'args': []},
+                {'timestamp': timestamp + 4, 'pid': 4412, 'name': 'socket', 'args': []}
+            ],
+            'syscall_analysis': {
+                'unique_syscalls': 22 + rng.randint(0, 12),
+                'file_operations': 30 + rng.randint(0, 18),
+                'network_operations': profile['network'],
+                'process_operations': 4 + rng.randint(0, 5),
+                'suspicious_patterns': profile['suspicious']
+            },
+            'network_analysis': {
+                'total_connections': profile['network'],
+                'unique_destinations': max(1, profile['network'] // 2),
+                'protocols_used': ['SOCK_STREAM', 'SOCK_DGRAM'][:1 + int(profile['network'] > 2)],
+                'network_requests': []
+            },
+            'monitor_output': {
+                'stdout': f"[{user_id}] Completed sandbox execution for {title}",
+                'stderr': '' if risk_level != 'High' else 'warning: anomalous syscall burst detected',
+                'return_code': 0 if risk_level != 'High' else 1
+            },
+            'risk_assessment': {
+                'risk_level': risk_level,
+                'risk_score': {'Low': 24, 'Medium': 57, 'High': 86}.get(risk_level, 57)
+            },
+            'created_for_demo': True
+        }
+
+    def _seed_demo_data_if_needed(self):
+        seed_users = ['diljot', 'rakshit', 'harish']
+        demo_templates = [
+            ('C2 Beacon Behavior Hunt', '/samples/high_risk_malware.sh', 'High'),
+            ('Packed Binary Sandbox Run', '/samples/high_entropy_binary.bin', 'Medium'),
+            ('Crypto Miner Process Trace', '/samples/crypto_miner.py', 'Medium'),
+            ('Filesystem Mutation Sweep', '/samples/filesystem_test.py', 'Low'),
+            ('Ransomware Simulator Execution', '/samples/ransomware_simulator.sh', 'High'),
+            ('Network Callback Inspection', '/samples/simple_network_malware.py', 'Medium')
+        ]
+
+        with self._lock:
+            store = self._read_store()
+
+            user_record_ids = {user: [] for user in seed_users}
+            for record_id, record in store['analyses'].items():
+                owner = record.get('owner_user_id')
+                if owner in user_record_ids:
+                    user_record_ids[owner].append(record_id)
+
+            needs_seed = any(len(user_record_ids[user]) == 0 for user in seed_users)
+            if not needs_seed:
+                return
+
+            rng = random.Random(1337)
+            existing_group_keys = {}
+            for group_id, group in store['groups'].items():
+                key = (group.get('name'), tuple(sorted(group.get('members', []))))
+                existing_group_keys[key] = group_id
+
+            template_index = 0
+            for user in seed_users:
+                missing = 2 - len(user_record_ids[user])
+                if missing <= 0:
+                    continue
+
+                for _ in range(missing):
+                    title, file_path, risk = demo_templates[template_index % len(demo_templates)]
+                    template_index += 1
+                    created_at = datetime.now().isoformat()
+                    demo_data = self._build_demo_analysis_data(user, title, file_path, risk, rng)
+                    record_id = self._new_id('record')
+                    record = {
+                        'id': record_id,
+                        'title': title,
+                        'owner_user_id': user,
+                        'source_analysis_id': demo_data.get('analysis_id'),
+                        'created_at': created_at,
+                        'summary': self._extract_summary(demo_data),
+                        'analysis_data': demo_data
+                    }
+                    store['analyses'][record_id] = record
+                    user_record_ids[user].append(record_id)
+
+            desired_groups = [
+                {
+                    'name': 'Rapid Response Cell',
+                    'owner_user_id': 'diljot',
+                    'members': ['diljot', 'rakshit']
+                },
+                {
+                    'name': 'Sandbox Lab',
+                    'owner_user_id': 'rakshit',
+                    'members': ['rakshit', 'harish']
+                },
+                {
+                    'name': 'Threat Intel Sync',
+                    'owner_user_id': 'harish',
+                    'members': ['diljot', 'rakshit', 'harish']
+                }
+            ]
+
+            group_ids = {}
+            for group_spec in desired_groups:
+                key = (group_spec['name'], tuple(sorted(group_spec['members'])))
+                existing_id = existing_group_keys.get(key)
+                if existing_id:
+                    group_ids[group_spec['name']] = existing_id
+                    continue
+
+                group_id = self._new_id('group')
+                group = {
+                    'id': group_id,
+                    'name': group_spec['name'],
+                    'owner_user_id': group_spec['owner_user_id'],
+                    'members': sorted(set(group_spec['members'])),
+                    'created_at': datetime.now().isoformat()
+                }
+                store['groups'][group_id] = group
+                group_ids[group_spec['name']] = group_id
+
+            existing_share_keys = set(
+                (share.get('group_id'), share.get('analysis_record_id'))
+                for share in store['group_shares']
+            )
+
+            demo_share_plan = [
+                ('diljot', 'Rapid Response Cell'),
+                ('diljot', 'Threat Intel Sync'),
+                ('rakshit', 'Rapid Response Cell'),
+                ('rakshit', 'Sandbox Lab'),
+                ('harish', 'Sandbox Lab'),
+                ('harish', 'Threat Intel Sync')
+            ]
+
+            for user, group_name in demo_share_plan:
+                record_id = user_record_ids.get(user, [None])[0]
+                group_id = group_ids.get(group_name)
+                if not record_id or not group_id:
+                    continue
+                key = (group_id, record_id)
+                if key in existing_share_keys:
+                    continue
+
+                store['group_shares'].append({
+                    'id': self._new_id('share'),
+                    'group_id': group_id,
+                    'analysis_record_id': record_id,
+                    'shared_by': user,
+                    'shared_at': datetime.now().isoformat()
+                })
+                existing_share_keys.add(key)
+
+            self._write_store(store)
+
+    def _read_store(self):
+        try:
+            with open(self.storage_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return self._default_store()
+            data.setdefault('analyses', {})
+            data.setdefault('groups', {})
+            data.setdefault('group_shares', [])
+            return data
+        except (json.JSONDecodeError, OSError):
+            return self._default_store()
+
+    def _write_store(self, data):
+        with open(self.storage_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+
+    def _new_id(self, prefix):
+        return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+    def _json_safe(self, value):
+        return json.loads(json.dumps(value, default=str))
+
+    def _extract_summary(self, analysis_data):
+        syscall_analysis = analysis_data.get('syscall_analysis', {})
+        risk_assessment = analysis_data.get('risk_assessment', {})
+        risk_level = (
+            risk_assessment.get('risk_level')
+            or analysis_data.get('threat_level')
+            or analysis_data.get('summary', {}).get('threat_level')
+            or ('Medium' if syscall_analysis.get('suspicious_patterns') else 'Unknown')
+        )
+
+        return {
+            'file_path': (
+                analysis_data.get('file_path')
+                or analysis_data.get('file_name')
+                or analysis_data.get('directory')
+                or 'N/A'
+            ),
+            'duration': analysis_data.get('duration'),
+            'total_syscalls': analysis_data.get('total_syscalls', 0),
+            'total_processes': analysis_data.get('total_processes', 0),
+            'risk_level': risk_level
+        }
+
+    def _user_can_access_record(self, store, user_id, record_id):
+        record = store['analyses'].get(record_id)
+        if not record:
+            return False
+
+        if record.get('owner_user_id') == user_id:
+            return True
+
+        for share in store['group_shares']:
+            if share.get('analysis_record_id') != record_id:
+                continue
+            group = store['groups'].get(share.get('group_id'))
+            if group and user_id in group.get('members', []):
+                return True
+        return False
+
+    def save_analysis(self, user_id, title, analysis_data, source_analysis_id=None):
+        with self._lock:
+            store = self._read_store()
+            record_id = self._new_id('record')
+            safe_data = self._json_safe(analysis_data)
+            record = {
+                'id': record_id,
+                'title': title or f"Analysis {record_id}",
+                'owner_user_id': user_id,
+                'source_analysis_id': source_analysis_id,
+                'created_at': datetime.now().isoformat(),
+                'summary': self._extract_summary(safe_data),
+                'analysis_data': safe_data
+            }
+            store['analyses'][record_id] = record
+            self._write_store(store)
+            return record
+
+    def list_user_analyses(self, user_id):
+        with self._lock:
+            store = self._read_store()
+            accessible = []
+
+            for record in store['analyses'].values():
+                record_id = record.get('id')
+                if not self._user_can_access_record(store, user_id, record_id):
+                    continue
+
+                shared_groups = []
+                for share in store['group_shares']:
+                    if share.get('analysis_record_id') != record_id:
+                        continue
+                    group = store['groups'].get(share.get('group_id'))
+                    if group and user_id in group.get('members', []):
+                        shared_groups.append({
+                            'group_id': group.get('id'),
+                            'group_name': group.get('name')
+                        })
+
+                item = {
+                    'id': record.get('id'),
+                    'title': record.get('title'),
+                    'owner_user_id': record.get('owner_user_id'),
+                    'created_at': record.get('created_at'),
+                    'summary': record.get('summary', {}),
+                    'shared_groups': shared_groups
+                }
+                accessible.append(item)
+
+            accessible.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            return accessible
+
+    def get_record_for_user(self, user_id, record_id):
+        with self._lock:
+            store = self._read_store()
+            if not self._user_can_access_record(store, user_id, record_id):
+                return None
+            return store['analyses'].get(record_id)
+
+    def create_group(self, owner_user_id, name, members=None):
+        members = members or []
+        normalized_members = sorted(set(
+            [owner_user_id] + [member.strip() for member in members if member and member.strip()]
+        ))
+
+        with self._lock:
+            store = self._read_store()
+            group_id = self._new_id('group')
+            group = {
+                'id': group_id,
+                'name': name,
+                'owner_user_id': owner_user_id,
+                'members': normalized_members,
+                'created_at': datetime.now().isoformat()
+            }
+            store['groups'][group_id] = group
+            self._write_store(store)
+            return group
+
+    def list_user_groups(self, user_id):
+        with self._lock:
+            store = self._read_store()
+            groups = []
+            for group in store['groups'].values():
+                if user_id in group.get('members', []):
+                    groups.append(group)
+            groups.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            return groups
+
+    def list_known_users(self):
+        with self._lock:
+            store = self._read_store()
+            users = set()
+
+            for record in store['analyses'].values():
+                owner = record.get('owner_user_id')
+                if owner:
+                    users.add(owner)
+
+            for group in store['groups'].values():
+                for member in group.get('members', []):
+                    if member:
+                        users.add(member)
+
+            ordered = sorted(users)
+            return [{'user_id': user_id} for user_id in ordered]
+
+    def share_analysis_to_group(self, user_id, group_id, analysis_record_id):
+        with self._lock:
+            store = self._read_store()
+            group = store['groups'].get(group_id)
+            if not group:
+                return {'error': 'Group not found'}
+
+            if user_id not in group.get('members', []):
+                return {'error': 'User is not a member of this group'}
+
+            if analysis_record_id not in store['analyses']:
+                return {'error': 'Analysis record not found'}
+
+            if not self._user_can_access_record(store, user_id, analysis_record_id):
+                return {'error': 'User cannot share this analysis record'}
+
+            for share in store['group_shares']:
+                if (
+                    share.get('group_id') == group_id and
+                    share.get('analysis_record_id') == analysis_record_id
+                ):
+                    return share
+
+            share = {
+                'id': self._new_id('share'),
+                'group_id': group_id,
+                'analysis_record_id': analysis_record_id,
+                'shared_by': user_id,
+                'shared_at': datetime.now().isoformat()
+            }
+            store['group_shares'].append(share)
+            self._write_store(store)
+            return share
+
+    def get_group_feed(self, user_id, group_id):
+        with self._lock:
+            store = self._read_store()
+            group = store['groups'].get(group_id)
+            if not group:
+                return {'error': 'Group not found'}
+
+            if user_id not in group.get('members', []):
+                return {'error': 'User is not a member of this group'}
+
+            feed = []
+            for share in store['group_shares']:
+                if share.get('group_id') != group_id:
+                    continue
+                record = store['analyses'].get(share.get('analysis_record_id'))
+                if not record:
+                    continue
+                feed.append({
+                    'share_id': share.get('id'),
+                    'shared_by': share.get('shared_by'),
+                    'shared_at': share.get('shared_at'),
+                    'analysis': {
+                        'id': record.get('id'),
+                        'title': record.get('title'),
+                        'owner_user_id': record.get('owner_user_id'),
+                        'created_at': record.get('created_at'),
+                        'summary': record.get('summary', {})
+                    }
+                })
+
+            feed.sort(key=lambda x: x.get('shared_at', ''), reverse=True)
+            return {
+                'group': group,
+                'feed': feed
+            }
+
+
+def _get_user_id(payload=None, required=True):
+    payload = payload or {}
+    user_id = (
+        payload.get('user_id')
+        or request.args.get('user_id')
+        or request.headers.get('X-User-Id')
+    )
+    if user_id:
+        user_id = str(user_id).strip()
+
+    if required and not user_id:
+        return None
+
+    return user_id or 'anonymous'
+
+
+def _pdf_escape_text(text):
+    if text is None:
+        return ''
+    text = str(text).replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+    text = text.replace('\n', ' ').replace('\r', ' ')
+    return ''.join(ch if 32 <= ord(ch) <= 126 else '?' for ch in text)
+
+
+def _build_simple_pdf(lines):
+    trimmed = [line[:110] for line in lines if line is not None]
+    if not trimmed:
+        trimmed = ['No report data available']
+    trimmed = trimmed[:60]
+
+    stream_lines = ['BT', '/F1 10 Tf', '50 760 Td']
+    for index, line in enumerate(trimmed):
+        if index > 0:
+            stream_lines.append('0 -14 Td')
+        stream_lines.append(f"({_pdf_escape_text(line)}) Tj")
+    stream_lines.append('ET')
+
+    content_stream = '\n'.join(stream_lines) + '\n'
+    content_bytes = content_stream.encode('latin-1', errors='replace')
+
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        f"<< /Length {len(content_bytes)} >>\nstream\n{content_stream}endstream"
+    ]
+
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+
+    for idx, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{idx} 0 obj\n{obj}\nendobj\n".encode('latin-1', errors='replace'))
+
+    xref_start = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode('latin-1'))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode('latin-1'))
+
+    trailer = (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_start}\n%%EOF\n"
+    )
+    pdf.extend(trailer.encode('latin-1'))
+    return bytes(pdf)
+
+
+def _analysis_record_to_pdf_lines(record):
+    summary = record.get('summary', {})
+    analysis_data = record.get('analysis_data', {})
+    monitor_output = analysis_data.get('monitor_output', {})
+    suspicious_patterns = analysis_data.get('syscall_analysis', {}).get('suspicious_patterns', [])
+
+    lines = [
+        "Sentinal Core Malware Analysis Report",
+        "",
+        f"Title: {record.get('title', 'N/A')}",
+        f"Record ID: {record.get('id', 'N/A')}",
+        f"Saved By: {record.get('owner_user_id', 'N/A')}",
+        f"Saved At: {record.get('created_at', 'N/A')}",
+        "",
+        "Summary",
+        f"File Path: {summary.get('file_path', 'N/A')}",
+        f"Risk Level: {summary.get('risk_level', 'Unknown')}",
+        f"Duration: {summary.get('duration', 'N/A')} seconds",
+        f"Total Syscalls: {summary.get('total_syscalls', 0)}",
+        f"Total Processes: {summary.get('total_processes', 0)}",
+        ""
+    ]
+
+    if suspicious_patterns:
+        lines.append("Suspicious Patterns")
+        for pattern in suspicious_patterns[:10]:
+            for wrapped in textwrap.wrap(f"- {pattern}", width=100):
+                lines.append(wrapped)
+        lines.append("")
+
+    stdout = monitor_output.get('stdout') or ''
+    stderr = monitor_output.get('stderr') or ''
+
+    if stdout:
+        lines.append("STDOUT (excerpt)")
+        for wrapped in textwrap.wrap(stdout[:500], width=100):
+            lines.append(wrapped)
+        lines.append("")
+
+    if stderr:
+        lines.append("STDERR (excerpt)")
+        for wrapped in textwrap.wrap(stderr[:500], width=100):
+            lines.append(wrapped)
+        lines.append("")
+
+    lines.append("End of report")
+    return lines
+
+
+def _record_summary_response(record):
+    return {
+        'id': record.get('id'),
+        'title': record.get('title'),
+        'owner_user_id': record.get('owner_user_id'),
+        'created_at': record.get('created_at'),
+        'summary': record.get('summary', {}),
+        'source_analysis_id': record.get('source_analysis_id')
+    }
+
 # Global analysis engine
 analysis_engine = AnalysisEngine()
+collaboration_store = CollaborationStore()
 
 @app.route('/')
 def index():
@@ -1136,6 +1717,163 @@ def get_status():
         status_info['platform_info'] = analysis_engine.platform_info.get_platform_summary()
     
     return jsonify(status_info)
+
+# Collaboration Endpoints
+@app.route('/api/collab/analysis/save', methods=['POST'])
+def save_analysis_record():
+    data = request.get_json(silent=True) or {}
+    user_id = _get_user_id(data, required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    analysis_data = data.get('analysis_data')
+    analysis_id = data.get('analysis_id')
+    if analysis_data is None and analysis_id:
+        analysis_data = analysis_engine.results.get(analysis_id)
+
+    if analysis_data is None:
+        return jsonify({'error': 'analysis_data or valid analysis_id is required'}), 400
+
+    title = data.get('title') or f"Analysis by {user_id}"
+    record = collaboration_store.save_analysis(user_id, title, analysis_data, source_analysis_id=analysis_id)
+
+    return jsonify({
+        'success': True,
+        'record': _record_summary_response(record),
+        'pdf_url': f"/api/collab/analysis/{record.get('id')}/pdf"
+    })
+
+
+@app.route('/api/collab/analysis/list', methods=['GET'])
+def list_analysis_records():
+    user_id = _get_user_id(required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    records = collaboration_store.list_user_analyses(user_id)
+    return jsonify({
+        'success': True,
+        'records': records
+    })
+
+
+@app.route('/api/collab/group/create', methods=['POST'])
+def create_collab_group():
+    data = request.get_json(silent=True) or {}
+    user_id = _get_user_id(data, required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    group_name = (data.get('group_name') or data.get('name') or '').strip()
+    if not group_name:
+        return jsonify({'error': 'group_name is required'}), 400
+
+    members = data.get('members', [])
+    if isinstance(members, str):
+        members = [member.strip() for member in members.split(',') if member.strip()]
+
+    group = collaboration_store.create_group(user_id, group_name, members)
+    return jsonify({
+        'success': True,
+        'group': group
+    })
+
+
+@app.route('/api/collab/groups', methods=['GET'])
+def list_collab_groups():
+    user_id = _get_user_id(required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    groups = collaboration_store.list_user_groups(user_id)
+    return jsonify({
+        'success': True,
+        'groups': groups
+    })
+
+
+@app.route('/api/collab/users', methods=['GET'])
+def list_collab_users():
+    return jsonify({
+        'success': True,
+        'users': collaboration_store.list_known_users()
+    })
+
+
+@app.route('/api/collab/group/share', methods=['POST'])
+def share_analysis_with_group():
+    data = request.get_json(silent=True) or {}
+    user_id = _get_user_id(data, required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    group_id = data.get('group_id')
+    analysis_record_id = data.get('analysis_record_id')
+    if not group_id or not analysis_record_id:
+        return jsonify({'error': 'group_id and analysis_record_id are required'}), 400
+
+    share = collaboration_store.share_analysis_to_group(user_id, group_id, analysis_record_id)
+    if 'error' in share:
+        return jsonify(share), 400
+
+    return jsonify({
+        'success': True,
+        'share': share
+    })
+
+
+@app.route('/api/collab/group/<group_id>/feed', methods=['GET'])
+def get_group_feed(group_id):
+    user_id = _get_user_id(required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    feed = collaboration_store.get_group_feed(user_id, group_id)
+    if 'error' in feed:
+        return jsonify(feed), 400
+
+    return jsonify({
+        'success': True,
+        **feed
+    })
+
+
+@app.route('/api/collab/analysis/<record_id>', methods=['GET'])
+def get_analysis_record(record_id):
+    user_id = _get_user_id(required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    record = collaboration_store.get_record_for_user(user_id, record_id)
+    if not record:
+        return jsonify({'error': 'Analysis record not found or access denied'}), 404
+
+    return jsonify({
+        'success': True,
+        'record': record
+    })
+
+
+@app.route('/api/collab/analysis/<record_id>/pdf', methods=['GET'])
+def download_analysis_pdf(record_id):
+    user_id = _get_user_id(required=True)
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+
+    record = collaboration_store.get_record_for_user(user_id, record_id)
+    if not record:
+        return jsonify({'error': 'Analysis record not found or access denied'}), 404
+
+    report_lines = _analysis_record_to_pdf_lines(record)
+    pdf_bytes = _build_simple_pdf(report_lines)
+    file_name = f"{record_id}.pdf"
+
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=file_name
+    )
 
 # Isolation System Endpoints
 @app.route('/api/isolation/status', methods=['GET'])
@@ -1868,4 +2606,7 @@ if __name__ == '__main__':
     
     print("Starting Sentinal Analysis Server...")
     print("Web interface: http://localhost:3000")
-    app.run(host='0.0.0.0', port=3000, debug=True)
+    # Keep reloader off by default to avoid dropped requests during long analyses.
+    debug_mode = os.getenv('FLASK_DEBUG', '0').lower() in ('1', 'true', 'yes')
+    use_reloader = os.getenv('FLASK_USE_RELOADER', '0').lower() in ('1', 'true', 'yes')
+    app.run(host='0.0.0.0', port=3000, debug=debug_mode, use_reloader=use_reloader)

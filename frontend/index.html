@@ -522,6 +522,59 @@
             Ready for analysis
         </div>
 
+        <div class="results-section" id="collabSection">
+            <h3>COLLABORATION</h3>
+            <div class="form-group">
+                <label for="collabUserId">User ID</label>
+                <input type="text" id="collabUserId" placeholder="e.g. diljot" value="diljot">
+                <div style="margin-top: 8px;">
+                    <button type="button" class="btn" style="padding: 6px 10px;" onclick="selectCollabUser('diljot')">diljot</button>
+                    <button type="button" class="btn" style="padding: 6px 10px; margin-left: 6px;" onclick="selectCollabUser('rakshit')">rakshit</button>
+                    <button type="button" class="btn" style="padding: 6px 10px; margin-left: 6px;" onclick="selectCollabUser('harish')">harish</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="collabTitle">Analysis Title</label>
+                <input type="text" id="collabTitle" placeholder="My malware analysis report">
+            </div>
+            <div class="form-group">
+                <button type="button" class="btn" onclick="saveCurrentAnalysis()">SAVE ANALYSIS</button>
+                <button type="button" class="btn" onclick="downloadCurrentPdf()" style="margin-left: 10px;">DOWNLOAD PDF</button>
+                <button type="button" class="btn" onclick="loadSavedAnalyses()" style="margin-left: 10px;">LOAD SAVED ANALYSES</button>
+            </div>
+
+            <div class="form-group">
+                <label for="savedAnalysisSelect">Saved Analyses</label>
+                <select id="savedAnalysisSelect" style="width: 100%; padding: 10px; border: 2px solid #333333;">
+                    <option value="">No saved analysis loaded</option>
+                </select>
+            </div>
+
+            <div class="form-group" style="border-top: 1px solid #333333; padding-top: 15px;">
+                <label for="groupName">Create Group</label>
+                <input type="text" id="groupName" placeholder="e.g. reverse-team">
+                <input type="text" id="groupMembers" placeholder="member IDs (comma separated)" style="margin-top: 10px;">
+            </div>
+            <div class="form-group">
+                <button type="button" class="btn" onclick="createCollabGroup()">CREATE GROUP</button>
+                <button type="button" class="btn" onclick="loadMyGroups()" style="margin-left: 10px;">LOAD MY GROUPS</button>
+            </div>
+
+            <div class="form-group">
+                <label for="groupSelect">Select Group</label>
+                <select id="groupSelect" style="width: 100%; padding: 10px; border: 2px solid #333333;">
+                    <option value="">No groups loaded</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <button type="button" class="btn" onclick="shareSavedAnalysisToGroup()">SHARE ANALYSIS TO GROUP</button>
+                <button type="button" class="btn" onclick="loadGroupFeed()" style="margin-left: 10px;">LOAD GROUP FEED</button>
+            </div>
+
+            <div class="log-output" id="collabOutput">Collaboration activity will appear here.</div>
+            <div class="log-output" id="groupFeedOutput" style="margin-top: 10px;">Group feed not loaded.</div>
+        </div>
+
         <div class="results" id="results">
             <!-- Suspicious patterns section -->
             <div class="suspicious-patterns" id="suspiciousPatterns" style="display: none;">
@@ -628,18 +681,93 @@
                     No output available
                 </div>
             </div>
+
         </div>
     </div>
 
     <script>
         let analysisInProgress = false;
+        let currentSavedRecordId = null;
+        let dynamicResultsTemplate = '';
 
         // Load platform information on page load
         window.addEventListener('load', function() {
+            const resultsEl = document.getElementById('results');
+            if (resultsEl) {
+                dynamicResultsTemplate = resultsEl.innerHTML;
+            }
             loadPlatformInfo();
             loadIsolationStatus();
             setupIsolationControls();
+            initializeCollaborationControls();
         });
+
+        function ensureDynamicResultsTemplate() {
+            const resultsEl = document.getElementById('results');
+            if (!resultsEl) return false;
+
+            if (!document.getElementById('totalSyscalls') && dynamicResultsTemplate) {
+                resultsEl.innerHTML = dynamicResultsTemplate;
+                initializeCollaborationControls();
+            }
+
+            return !!document.getElementById('totalSyscalls');
+        }
+
+        function initializeCollaborationControls() {
+            const storedUserId = localStorage.getItem('sentinal_collab_user_id');
+            const userInput = document.getElementById('collabUserId');
+            if (!userInput) return;
+
+            if (storedUserId) {
+                userInput.value = storedUserId;
+            } else if (!userInput.value) {
+                userInput.value = 'diljot';
+            }
+
+            loadCollabUsers();
+            loadSavedAnalyses();
+            loadMyGroups();
+        }
+
+        function selectCollabUser(userId) {
+            const userInput = document.getElementById('collabUserId');
+            if (userInput) {
+                userInput.value = userId;
+            }
+            localStorage.setItem('sentinal_collab_user_id', userId);
+            loadSavedAnalyses();
+            loadMyGroups();
+        }
+
+        async function loadCollabUsers() {
+            try {
+                const response = await fetch('/api/collab/users');
+                const result = await response.json();
+                if (!response.ok || !result.success || !Array.isArray(result.users)) {
+                    return;
+                }
+                const knownUsers = result.users
+                    .map(user => user.user_id)
+                    .filter(Boolean)
+                    .join(', ');
+                if (knownUsers) {
+                    setCollabOutput(`Available users: ${knownUsers}`);
+                }
+            } catch (error) {
+                console.error('Failed to load collaboration users:', error);
+            }
+        }
+
+        function getCollabUserId() {
+            const userId = (document.getElementById('collabUserId')?.value || '').trim();
+            if (!userId) {
+                showStatus('Please enter User ID in Collaboration section', 'error');
+                return null;
+            }
+            localStorage.setItem('sentinal_collab_user_id', userId);
+            return userId;
+        }
 
         async function loadPlatformInfo() {
             try {
@@ -1101,6 +1229,11 @@
         }
 
         function displayResults(data) {
+            if (!ensureDynamicResultsTemplate()) {
+                showStatus('Results UI is unavailable. Please refresh the page.', 'error');
+                return;
+            }
+
             // Show results section
             document.getElementById('results').style.display = 'block';
 
@@ -1141,7 +1274,14 @@
 
             // Show AI analysis section for dynamic analysis
             document.getElementById('aiAnalysisSection').style.display = 'block';
-            window.currentAnalysisData = data; // Store for AI analysis
+            window.currentAnalysisData = data; // Store for AI and collaboration
+            currentSavedRecordId = null;
+
+            const titleInput = document.getElementById('collabTitle');
+            if (titleInput) {
+                const baseName = (data.file_path || 'analysis').split('/').pop();
+                titleInput.value = `Analysis - ${baseName}`;
+            }
 
             // Scroll to results
             document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
@@ -1506,6 +1646,7 @@
             `;
             
             resultsEl.innerHTML = html;
+            resultsEl.style.display = 'block';
             hideStatus();
         }
         
@@ -1540,6 +1681,7 @@
             `;
             
             resultsEl.innerHTML = html;
+            resultsEl.style.display = 'block';
             hideStatus();
         }
         
@@ -1581,6 +1723,7 @@
             `;
             
             resultsEl.innerHTML = html;
+            resultsEl.style.display = 'block';
             hideStatus();
         }
         
@@ -1617,11 +1760,15 @@
             `;
             
             resultsEl.innerHTML = html;
+            resultsEl.style.display = 'block';
             hideStatus();
         }
         
         function clearResults() {
-            document.getElementById('results').innerHTML = '';
+            const resultsEl = document.getElementById('results');
+            if (resultsEl) {
+                resultsEl.style.display = 'none';
+            }
         }
 
         // AI Analysis function
@@ -1711,6 +1858,269 @@
                 `;
             } else {
                 aiResults.textContent = 'No analysis content received from AI service.';
+            }
+        }
+
+        function getSelectedRecordId() {
+            const selected = document.getElementById('savedAnalysisSelect')?.value;
+            return selected || currentSavedRecordId;
+        }
+
+        function setCollabOutput(message) {
+            const output = document.getElementById('collabOutput');
+            if (output) output.textContent = message;
+        }
+
+        async function saveCurrentAnalysis() {
+            const userId = getCollabUserId();
+            if (!userId) return;
+
+            if (!window.currentAnalysisData) {
+                setCollabOutput('No analysis data available. Run analysis first.');
+                return;
+            }
+
+            const title = (document.getElementById('collabTitle')?.value || 'Untitled Analysis').trim();
+            setCollabOutput('Saving analysis...');
+
+            try {
+                const response = await fetch('/api/collab/analysis/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        title: title,
+                        analysis_data: window.currentAnalysisData
+                    })
+                });
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    setCollabOutput(`Save failed: ${result.error || 'Unknown error'}`);
+                    return;
+                }
+
+                currentSavedRecordId = result.record.id;
+                setCollabOutput(`Saved: ${result.record.title}\nRecord ID: ${result.record.id}`);
+                await loadSavedAnalyses();
+            } catch (error) {
+                setCollabOutput(`Save failed: ${error.message}`);
+            }
+        }
+
+        async function loadSavedAnalyses() {
+            const userId = getCollabUserId();
+            if (!userId) return;
+
+            try {
+                const response = await fetch(`/api/collab/analysis/list?user_id=${encodeURIComponent(userId)}`);
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    setCollabOutput(`Could not load saved analyses: ${result.error || 'Unknown error'}`);
+                    return;
+                }
+
+                const select = document.getElementById('savedAnalysisSelect');
+                select.innerHTML = '';
+
+                if (!result.records.length) {
+                    select.innerHTML = '<option value="">No saved analyses</option>';
+                    return;
+                }
+
+                result.records.forEach(record => {
+                    const option = document.createElement('option');
+                    option.value = record.id;
+                    option.textContent = `${record.title} (${record.owner_user_id})`;
+                    select.appendChild(option);
+                });
+
+                if (currentSavedRecordId) {
+                    select.value = currentSavedRecordId;
+                }
+            } catch (error) {
+                setCollabOutput(`Could not load saved analyses: ${error.message}`);
+            }
+        }
+
+        async function downloadCurrentPdf() {
+            const userId = getCollabUserId();
+            if (!userId) return;
+
+            let recordId = getSelectedRecordId();
+            if (!recordId) {
+                await saveCurrentAnalysis();
+                recordId = getSelectedRecordId();
+            }
+
+            if (!recordId) {
+                setCollabOutput('No saved record available for PDF export.');
+                return;
+            }
+
+            const pdfUrl = `/api/collab/analysis/${encodeURIComponent(recordId)}/pdf?user_id=${encodeURIComponent(userId)}`;
+            window.open(pdfUrl, '_blank');
+        }
+
+        async function createCollabGroup() {
+            const userId = getCollabUserId();
+            if (!userId) return;
+
+            const groupName = (document.getElementById('groupName')?.value || '').trim();
+            const membersRaw = (document.getElementById('groupMembers')?.value || '').trim();
+            if (!groupName) {
+                setCollabOutput('Please enter a group name.');
+                return;
+            }
+
+            const members = membersRaw
+                ? membersRaw.split(',').map(member => member.trim()).filter(Boolean)
+                : [];
+
+            try {
+                const response = await fetch('/api/collab/group/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        group_name: groupName,
+                        members: members
+                    })
+                });
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    setCollabOutput(`Group create failed: ${result.error || 'Unknown error'}`);
+                    return;
+                }
+
+                setCollabOutput(`Group created: ${result.group.name}\nGroup ID: ${result.group.id}`);
+                await loadMyGroups();
+                const groupSelect = document.getElementById('groupSelect');
+                groupSelect.value = result.group.id;
+            } catch (error) {
+                setCollabOutput(`Group create failed: ${error.message}`);
+            }
+        }
+
+        async function loadMyGroups() {
+            const userId = getCollabUserId();
+            if (!userId) return;
+
+            try {
+                const response = await fetch(`/api/collab/groups?user_id=${encodeURIComponent(userId)}`);
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    setCollabOutput(`Could not load groups: ${result.error || 'Unknown error'}`);
+                    return;
+                }
+
+                const groupSelect = document.getElementById('groupSelect');
+                groupSelect.innerHTML = '';
+
+                if (!result.groups.length) {
+                    groupSelect.innerHTML = '<option value="">No groups found</option>';
+                    return;
+                }
+
+                result.groups.forEach(group => {
+                    const option = document.createElement('option');
+                    option.value = group.id;
+                    option.textContent = `${group.name} (${group.id})`;
+                    groupSelect.appendChild(option);
+                });
+            } catch (error) {
+                setCollabOutput(`Could not load groups: ${error.message}`);
+            }
+        }
+
+        async function shareSavedAnalysisToGroup() {
+            const userId = getCollabUserId();
+            if (!userId) return;
+
+            const groupId = document.getElementById('groupSelect')?.value;
+            let recordId = getSelectedRecordId();
+
+            if (!recordId) {
+                await saveCurrentAnalysis();
+                recordId = getSelectedRecordId();
+            }
+
+            if (!groupId) {
+                setCollabOutput('Please select a group.');
+                return;
+            }
+            if (!recordId) {
+                setCollabOutput('No saved analysis to share.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/collab/group/share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        group_id: groupId,
+                        analysis_record_id: recordId
+                    })
+                });
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    setCollabOutput(`Share failed: ${result.error || 'Unknown error'}`);
+                    return;
+                }
+
+                setCollabOutput(`Shared record ${recordId} to group ${groupId}`);
+            } catch (error) {
+                setCollabOutput(`Share failed: ${error.message}`);
+            }
+        }
+
+        async function loadGroupFeed() {
+            const userId = getCollabUserId();
+            if (!userId) return;
+
+            const groupId = document.getElementById('groupSelect')?.value;
+            if (!groupId) {
+                setCollabOutput('Please select a group.');
+                return;
+            }
+
+            const feedOutput = document.getElementById('groupFeedOutput');
+            feedOutput.textContent = 'Loading group feed...';
+
+            try {
+                const response = await fetch(`/api/collab/group/${encodeURIComponent(groupId)}/feed?user_id=${encodeURIComponent(userId)}`);
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    feedOutput.textContent = `Feed load failed: ${result.error || 'Unknown error'}`;
+                    return;
+                }
+
+                if (!result.feed.length) {
+                    feedOutput.textContent = 'Group feed is empty.';
+                    return;
+                }
+
+                const lines = [];
+                lines.push(`Group: ${result.group.name} (${result.group.id})`);
+                lines.push('');
+                result.feed.forEach(item => {
+                    lines.push(`[${item.shared_at}] ${item.analysis.title}`);
+                    lines.push(`  Shared By: ${item.shared_by}`);
+                    lines.push(`  Record ID: ${item.analysis.id}`);
+                    lines.push(`  Risk: ${item.analysis.summary?.risk_level || 'Unknown'}`);
+                    lines.push(`  File: ${item.analysis.summary?.file_path || 'N/A'}`);
+                    lines.push('');
+                });
+                feedOutput.textContent = lines.join('\n');
+            } catch (error) {
+                feedOutput.textContent = `Feed load failed: ${error.message}`;
             }
         }
 

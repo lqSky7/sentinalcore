@@ -513,7 +513,7 @@ Keep under 400 words."""
             
             for attempt in range(max_retries):
                 try:
-                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
                     
                     payload = {
                         "contents": [{
@@ -746,4 +746,6 @@ if __name__ == '__main__':
     print("Starting Sentinal Analysis Server...")
     print(f"Platform: {analysis_engine.platform} on {analysis_engine.architecture}")
     print("Web interface: http://localhost:3000")
-    app.run(host='0.0.0.0', port=3000, debug=True)
+    debug_mode = os.getenv('FLASK_DEBUG', '0').lower() in ('1', 'true', 'yes')
+    use_reloader = os.getenv('FLASK_USE_RELOADER', '0').lower() in ('1', 'true', 'yes')
+    app.run(host='0.0.0.0', port=3000, debug=debug_mode, use_reloader=use_reloader)

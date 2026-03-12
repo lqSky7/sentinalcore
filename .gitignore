@@ -76,3 +76,6 @@ samples/*.out
 # API Keys and Secrets
 api_keys.txt
 secrets.json
+
+# Collaboration runtime data
+backend/data/collab_store.json
